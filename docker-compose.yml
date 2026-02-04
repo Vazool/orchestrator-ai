@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: europ-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: europ
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./db/schema:/docker-entrypoint-initdb.d
