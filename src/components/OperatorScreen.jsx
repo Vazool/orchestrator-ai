@@ -79,108 +79,139 @@ function OperatorScreen() {
   };
 
   return (
-    <div>
+    <div style={styles.container}>
       <h2>Operator Console</h2>
+      <div style = {styles.box}>
+        <h3>API Simulation</h3>
 
-      <h3>API Simulation</h3>
-
-      <div>
-        <label>
-          Event type{" "}
-          <select value={eventType} onChange={(e) => setEventType(e.target.value)}>
-            {EVENT_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div>
-        <label>
-          Event date{" "}
-          <input
-            type="date"
-            value={eventDate}
-            onChange={(e) => setEventDate(e.target.value)}
-          />
-        </label>
-      </div>
-
-      <div>
-        <label>
-          Location type{" "}
-          <select
-            value={locationType}
-            onChange={(e) => onLocationTypeChange(e.target.value)}
-          >
-            {LOCATION_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div>
-        <label>
-          Location code{" "}
-          <select
-            value={locationCode}
-            onChange={(e) => setLocationCode(e.target.value)}
-          >
-            {(LOCATION_CODES[locationType] || []).map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div>
-        <label>
-          Severity (1–5){" "}
-          <input
-            type="number"
-            min="1"
-            max="5"
-            value={severityLevel}
-            onChange={(e) => setSeverityLevel(e.target.value)}
-          />
-        </label>
-      </div>
-
-      <button onClick={simulateEvent} disabled={loading || !locationCode}>
-        {loading ? "Running..." : "Simulate Event"}
-      </button>
-
-      {error && <p>{error}</p>}
-
-      {simulateResult && (
         <div>
-          <h3>Simulation Result</h3>
-          <p>Event ID: {simulateResult.event_id}</p>
-          <p>Customers evaluated: {simulateResult.customers_evaluated}</p>
-          <p>Notifications created: {simulateResult.notifications_created}</p>
-
-          {simulateResult.simulated_payload && (
-            <>
-              <h4>Simulated payload (echo)</h4>
-              <pre>{JSON.stringify(simulateResult.simulated_payload, null, 2)}</pre>
-            </>
-          )}
+          <label>
+            Event type{" "}
+            <select value={eventType} onChange={(e) => setEventType(e.target.value)}>
+              {EVENT_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </label>
         </div>
-      )}
 
-      {dashboard && (
         <div>
-          <h3>Commissioner Dashboard (v0)</h3>
-
-          <details>
-            <summary>View raw dashboard data</summary>
-            <pre>{JSON.stringify(dashboard, null, 2)}</pre>
-          </details>
+          <label>
+            Event date{" "}
+            <input
+              type="date"
+              value={eventDate}
+              onChange={(e) => setEventDate(e.target.value)}
+            />
+          </label>
         </div>
-      )}
+
+        <div>
+          <label>
+            Location type{" "}
+            <select
+              value={locationType}
+              onChange={(e) => onLocationTypeChange(e.target.value)}
+            >
+              {LOCATION_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div>
+          <label>
+            Location code{" "}
+            <select
+              value={locationCode}
+              onChange={(e) => setLocationCode(e.target.value)}
+            >
+              {(LOCATION_CODES[locationType] || []).map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div>
+          <label>
+            Severity (1–5){" "}
+            <input
+              type="number"
+              min="1"
+              max="5"
+              value={severityLevel}
+              onChange={(e) => setSeverityLevel(e.target.value)}
+            />
+          </label>
+        </div>
+
+        <button onClick={simulateEvent} disabled={loading || !locationCode}>
+          {loading ? "Running..." : "Simulate Event"}
+        </button>
+
+        {error && <p>{error}</p>}
+
+        {simulateResult && (
+          <div>
+            <h3>Simulation Result</h3>
+            <p>Event ID: {simulateResult.event_id}</p>
+            <hr />
+            {/* New Headline Totals */}
+            <p><strong>Total Portfolio:</strong> {simulateResult.total_records}</p>
+            <p><strong>Customers Evaluated:</strong> {simulateResult.customers_evaluated}</p>
+            <p><strong>Notifications Created:</strong> {simulateResult.notifications_created}</p>
+            <p><strong>Customers Not Impacted:</strong> {simulateResult.customers_not_impacted}</p>
+
+            {simulateResult.simulated_payload && (
+              <>
+                <h4>Simulated payload (echo)</h4>
+                <pre>{JSON.stringify(simulateResult.simulated_payload, null, 2)}</pre>
+              </>
+            )}
+          </div>
+        )}
+
+        {dashboard && (
+          <div>
+            <h3>Commissioner Dashboard (v0)</h3>
+
+            <details>
+              <summary>View raw dashboard data</summary>
+              <pre>{JSON.stringify(dashboard, null, 2)}</pre>
+            </details>
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+const styles= {
+  container: {
+    display:"flex",
+    flexDirection:"column",
+    justifyContent:"center",
+    alignItems:"center",
+    width:"50%",
+    height:"100%",
+    backgroundColor: "#fff",
+    padding: "24px",
+    borderRadius: "12px",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
+    fontSize:"2rem",
+    marginLeft: "50vh"
+  
+
+  },
+  box:{
+    maxWidth: "600px",
+    width: "100%", 
+    height:"100%",
+    fontSize:"1.5rem",
+  }
+
 }
 
 export default OperatorScreen;
