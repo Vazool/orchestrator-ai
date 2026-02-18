@@ -1,10 +1,8 @@
-CREATE DATABASE  IF NOT EXISTS `europ_assistance_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */ /*!80016 DEFAULT ENCRYPTION='N' */;
-USE `europ_assistance_db`;
--- MySQL dump 10.13  Distrib 8.0.44, for Win64 (x86_64)
+-- MySQL dump 10.13  Distrib 8.0.45, for Win64 (x86_64)
 --
--- Host: localhost    Database: europ_assistance_db
+-- Host: 127.0.0.1    Database: europ_assistance_db
 -- ------------------------------------------------------
--- Server version	8.0.44
+-- Server version	8.0.45
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -27,8 +25,8 @@ DROP TABLE IF EXISTS `actions`;
 CREATE TABLE `actions` (
   `action_id` int NOT NULL AUTO_INCREMENT,
   `decision_id` int NOT NULL,
-  `channel_type` varchar(20) NOT NULL,
-  `action_status` varchar(20) NOT NULL,
+  `channel_type` varchar(50) DEFAULT NULL,
+  `action_status` varchar(50) DEFAULT NULL,
   `message` text,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`action_id`),
@@ -36,7 +34,7 @@ CREATE TABLE `actions` (
   CONSTRAINT `actions_ibfk_1` FOREIGN KEY (`decision_id`) REFERENCES `decisions` (`decision_id`),
   CONSTRAINT `actions_chk_1` CHECK ((`channel_type` in (_utf8mb4'sms',_utf8mb4'email',_utf8mb4'push',_utf8mb4'whatsapp',_utf8mb4'in_app'))),
   CONSTRAINT `actions_chk_2` CHECK ((`action_status` in (_utf8mb4'queued',_utf8mb4'sent',_utf8mb4'failed')))
-) ENGINE=InnoDB AUTO_INCREMENT=158 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1472 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -52,9 +50,10 @@ CREATE TABLE `customers` (
   `surname` varchar(100) NOT NULL,
   `email` varchar(255) NOT NULL,
   `optin` tinyint(1) NOT NULL,
-  `preferred_language` varchar(10) NOT NULL,
-  `country` varchar(50) NOT NULL,
-  `channel_type` varchar(50) NOT NULL,
+  `preferred_language` varchar(50) DEFAULT 'English',
+  `country` varchar(50) DEFAULT NULL,
+  `channel_type` varchar(50) DEFAULT NULL,
+  `dob` date DEFAULT NULL,
   PRIMARY KEY (`customer_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1001 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -70,8 +69,8 @@ CREATE TABLE `decisions` (
   `decision_id` int NOT NULL AUTO_INCREMENT,
   `event_id` int NOT NULL,
   `travel_id` int NOT NULL,
-  `decision_type` varchar(50) NOT NULL,
-  `reason_code` varchar(100) NOT NULL,
+  `decision_type` varchar(50) DEFAULT NULL,
+  `reason_code` varchar(50) DEFAULT NULL,
   `reason` text,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`decision_id`),
@@ -82,7 +81,7 @@ CREATE TABLE `decisions` (
   CONSTRAINT `decisions_ibfk_2` FOREIGN KEY (`event_id`) REFERENCES `events` (`event_id`),
   CONSTRAINT `decisions_chk_1` CHECK ((`decision_type` in (_utf8mb4'no_action',_utf8mb4'notify',_utf8mb4'notify_safety_only'))),
   CONSTRAINT `decisions_chk_2` CHECK ((`reason_code` in (_utf8mb4'not_travelling',_utf8mb4'no_consent',_utf8mb4'no_coverage',_utf8mb4'eligible',_utf8mb4'goodwill_alert',_utf8mb4'already_contacted')))
-) ENGINE=InnoDB AUTO_INCREMENT=601 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2431 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -109,7 +108,7 @@ CREATE TABLE `events` (
   CONSTRAINT `events_chk_2` CHECK ((`location_type` in (_utf8mb4'Country',_utf8mb4'Region',_utf8mb4'Admin_area',_utf8mb4'City',_utf8mb4'Airport',_utf8mb4'Flight'))),
   CONSTRAINT `events_chk_3` CHECK ((`severity_level` between 1 and 5)),
   CONSTRAINT `events_chk_4` CHECK ((`source` in (_utf8mb4'Simulator',_utf8mb4'Live API',_utf8mb4'Manual',_utf8mb4'Government')))
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -129,7 +128,7 @@ CREATE TABLE `locations` (
   KEY `fk_locations_parent` (`parent_location_id`),
   CONSTRAINT `fk_locations_parent` FOREIGN KEY (`parent_location_id`) REFERENCES `locations` (`location_id`),
   CONSTRAINT `locations_chk_1` CHECK ((`location_type` in (_utf8mb4'Country',_utf8mb4'Region',_utf8mb4'Admin_area',_utf8mb4'City',_utf8mb4'Airport')))
-) ENGINE=InnoDB AUTO_INCREMENT=49 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=74 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -142,17 +141,16 @@ DROP TABLE IF EXISTS `policies`;
 CREATE TABLE `policies` (
   `policy_id` int NOT NULL AUTO_INCREMENT,
   `customer_id` int NOT NULL,
-  `policy_type` varchar(50) NOT NULL,
-  `active_status` tinyint(1) NOT NULL,
+  `policy_type` varchar(100) DEFAULT NULL,
+  `active_status` tinyint DEFAULT '1',
   `policy_coverage` text,
   `policy_coverage_json` json NOT NULL DEFAULT (json_object(_utf8mb4'weather_warning',false,_utf8mb4'flight_disruption',false,_utf8mb4'gov_advice_change',false,_utf8mb4'major_event',false,_utf8mb4'safety_only',false)),
   PRIMARY KEY (`policy_id`),
   UNIQUE KEY `customer_id` (`customer_id`),
   KEY `idx_policies_customer_active` (`customer_id`,`active_status`),
   CONSTRAINT `policies_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`customer_id`),
-  CONSTRAINT `chk_policy_coverage_json` CHECK (json_schema_valid(_utf8mb4'{\n            "type": "object",\n            "additionalProperties": false,\n            "properties": {\n              "weather_warning":   { "type": "boolean" },\n              "flight_disruption":{ "type": "boolean" },\n              "gov_advice_change":{ "type": "boolean" },\n              "major_event":      { "type": "boolean" },\n              "safety_only":      { "type": "boolean" }\n            },\n            "required": [\n              "weather_warning",\n              "flight_disruption",\n              "gov_advice_change",\n              "major_event",\n              "safety_only"\n            ]\n          }',`policy_coverage_json`)),
-  CONSTRAINT `policies_chk_1` CHECK ((`policy_type` in (_utf8mb4'Travel',_utf8mb4'Home')))
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  CONSTRAINT `chk_policy_coverage_json` CHECK (json_schema_valid(_utf8mb4'{\n            "type": "object",\n            "additionalProperties": false,\n            "properties": {\n              "weather_warning":   { "type": "boolean" },\n              "flight_disruption":{ "type": "boolean" },\n              "gov_advice_change":{ "type": "boolean" },\n              "major_event":      { "type": "boolean" },\n              "safety_only":      { "type": "boolean" }\n            },\n            "required": [\n              "weather_warning",\n              "flight_disruption",\n              "gov_advice_change",\n              "major_event",\n              "safety_only"\n            ]\n          }',`policy_coverage_json`))
+) ENGINE=InnoDB AUTO_INCREMENT=1001 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -186,6 +184,7 @@ CREATE TABLE `travel` (
   `destination_region` varchar(50) NOT NULL,
   `start_date` date NOT NULL,
   `end_date` date NOT NULL,
+  `final_destination` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`travel_id`),
   KEY `customer_id` (`customer_id`),
   CONSTRAINT `travel_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`customer_id`)
@@ -201,4 +200,4 @@ CREATE TABLE `travel` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-02-07 14:04:32
+-- Dump completed on 2026-02-18 14:00:22

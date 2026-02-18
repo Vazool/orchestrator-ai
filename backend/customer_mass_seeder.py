@@ -8,9 +8,9 @@ def seed_portfolio():
     try:
         print("Starting 1000-record mass-seed...")
         db.execute(text("SET FOREIGN_KEY_CHECKS = 0;"))
-        db.execute(text("TRUNCATE TABLE Travel;"))
-        db.execute(text("TRUNCATE TABLE PolicyCoverage;"))
-        db.execute(text("TRUNCATE TABLE Customers;"))
+        db.execute(text("TRUNCATE TABLE travel;"))
+        db.execute(text("TRUNCATE TABLE policycoverage;"))
+        db.execute(text("TRUNCATE TABLE customers;"))
         db.execute(text("SET FOREIGN_KEY_CHECKS = 1;"))
 
         for i in range(1, 1001):
@@ -19,7 +19,7 @@ def seed_portfolio():
             
             # Match Step 1 Schema
             db.execute(text("""
-                INSERT INTO Customers (forename, surname, email, optin, preferred_language, country, channel_type) 
+                INSERT INTO customers (forename, surname, email, optin, preferred_language, country, channel_type) 
                 VALUES (:f, :s, :e, :o, 'en', 'UK', 'push')
             """), {"f": f"User{i}", "s": "Test", "e": f"user{i}@example.com", "o": optin})
             
@@ -27,7 +27,7 @@ def seed_portfolio():
             
             # Policy Logic
             p_type = 'platinum_all' if i <= 100 else random.choice(['flight_delay', 'weather_warning', 'basic_travel'])
-            db.execute(text("INSERT INTO PolicyCoverage (customer_id, policy_type) VALUES (:cid, :pt)"), 
+            db.execute(text("INSERT INTO policycoverage (customer_id, policy_type) VALUES (:cid, :pt)"), 
                        {"cid": cust_id, "pt": p_type})
 
             # Travel Logic Clusters
@@ -41,7 +41,7 @@ def seed_portfolio():
                 arr, dest = 'LYS', 'FR-69' # Lyon
 
             db.execute(text("""
-                INSERT INTO Travel (customer_id, arrival_airport, destination_region, start_date, end_date)
+                INSERT INTO travel (customer_id, arrival_airport, destination_region, start_date, end_date)
                 VALUES (:cid, :arr, :dest, '2026-02-12', '2026-02-20')
             """), {"cid": cust_id, "arr": arr, "dest": dest})
 

@@ -26,7 +26,7 @@ app.add_middleware(
 def simulate_event(payload: dict, db: Session = Depends(get_db)):
     # 1. Record the Event
     event_sql = text("""
-        INSERT INTO Events (event_type, location_type, location_code, event_date, severity_level, source)
+        INSERT INTO events (event_type, location_type, location_code, event_date, severity_level, source)
         VALUES (:et, :lt, :lc, :ed, :sl, :src)
     """)
     result = db.execute(event_sql, {
@@ -48,16 +48,16 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
     # 2. Matching Logic (Recursive Hierarchy)
     matching_sql = text("""
         WITH RECURSIVE LocationHierarchy AS (
-            SELECT location_id, code FROM Locations WHERE code = :loc
+            SELECT location_id, code FROM locations WHERE code = :loc
             UNION ALL
             SELECT l.location_id, l.code
-            FROM Locations l
+            FROM locations l
             INNER JOIN LocationHierarchy lh ON l.parent_location_id = lh.location_id
         )
         SELECT t.travel_id, t.customer_id, c.forename, c.optin, pc.policy_type
-        FROM Travel t
-        JOIN Customers c ON t.customer_id = c.customer_id
-        JOIN PolicyCoverage pc ON c.customer_id = pc.customer_id
+        FROM travel t
+        JOIN customers c ON t.customer_id = c.customer_id
+        JOIN policycoverage pc ON c.customer_id = pc.customer_id
         WHERE :event_date BETWEEN t.start_date AND t.end_date
         AND (
             t.arrival_airport IN (SELECT code FROM LocationHierarchy) OR
@@ -82,8 +82,8 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
             # GATE 2: DEDUPLICATION (State-Awareness Check)
             # Check if this customer got an alert for this TYPE and LOCATION in the last 7 days
             dedup_sql = text("""
-                SELECT COUNT(*) FROM Decisions d
-                JOIN Events e ON d.event_id = e.event_id
+                SELECT COUNT(*) FROM decisions d
+                JOIN events e ON d.event_id = e.event_id
                 WHERE d.travel_id = :tid 
                   AND e.event_type = :et 
                   AND e.location_code = :loc 
@@ -118,14 +118,14 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
 
         # Insert into Decisions
         dec_res = db.execute(text("""
-            INSERT INTO Decisions (event_id, travel_id, decision_type, reason_code)
+            INSERT INTO decisions (event_id, travel_id, decision_type, reason_code)
             VALUES (:eid, :tid, :dt, :rc)
         """), {"eid": event_id, "tid": traveler.travel_id, "dt": decision, "rc": reason})
         
         # Insert into Actions (Only if a message was generated)
         if msg:
             db.execute(text("""
-                INSERT INTO Actions (decision_id, channel_type, action_status, message)
+                INSERT INTO actions (decision_id, channel_type, action_status, message)
                 VALUES (:did, 'email', 'queued', :msg)
             """), {"did": dec_res.lastrowid, "msg": msg})
 
@@ -160,7 +160,7 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
 @app.get("/alerts")
 def get_alerts(db: Session = Depends(get_db)):
     # Returns latest notifications for CJ's NotificationScreen
-    query = text("SELECT action_id as id, message, created_at as time FROM Actions ORDER BY created_at DESC LIMIT 50")
+    query = text("SELECT action_id as id, message, created_at as time FROM actions ORDER BY created_at DESC LIMIT 50")
     results = db.execute(query).fetchall()
     return [dict(r._mapping) for r in results]
 
@@ -168,7 +168,7 @@ def get_alerts(db: Session = Depends(get_db)):
 def get_dashboard(event_id: int, db: Session = Depends(get_db)):
     query = text("""
         SELECT reason_code, COUNT(*) as count
-        FROM Decisions WHERE event_id = :eid
+        FROM decisions WHERE event_id = :eid
         GROUP BY reason_code
     """)
     results = db.execute(query, {"eid": event_id}).fetchall()
