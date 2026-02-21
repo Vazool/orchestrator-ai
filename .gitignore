@@ -32,3 +32,6 @@ dist-ssr/
 # local env files
 .env*
 !.env.example
+
+# database
+*.db
