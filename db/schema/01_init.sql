@@ -34,7 +34,7 @@ CREATE TABLE `actions` (
   CONSTRAINT `actions_ibfk_1` FOREIGN KEY (`decision_id`) REFERENCES `decisions` (`decision_id`),
   CONSTRAINT `actions_chk_1` CHECK ((`channel_type` in (_utf8mb4'sms',_utf8mb4'email',_utf8mb4'push',_utf8mb4'whatsapp',_utf8mb4'in_app'))),
   CONSTRAINT `actions_chk_2` CHECK ((`action_status` in (_utf8mb4'queued',_utf8mb4'sent',_utf8mb4'failed')))
-) ENGINE=InnoDB AUTO_INCREMENT=1472 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -54,6 +54,7 @@ CREATE TABLE `customers` (
   `country` varchar(50) DEFAULT NULL,
   `channel_type` varchar(50) DEFAULT NULL,
   `dob` date DEFAULT NULL,
+  `travel_purpose` varchar(20) DEFAULT 'leisure',
   PRIMARY KEY (`customer_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1001 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -73,6 +74,7 @@ CREATE TABLE `decisions` (
   `reason_code` varchar(50) DEFAULT NULL,
   `reason` text,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `risk_score` float DEFAULT NULL,
   PRIMARY KEY (`decision_id`),
   KEY `idx_decisions_event` (`event_id`),
   KEY `idx_decisions_reason` (`reason_code`),
@@ -80,8 +82,8 @@ CREATE TABLE `decisions` (
   CONSTRAINT `decisions_ibfk_1` FOREIGN KEY (`travel_id`) REFERENCES `travel` (`travel_id`),
   CONSTRAINT `decisions_ibfk_2` FOREIGN KEY (`event_id`) REFERENCES `events` (`event_id`),
   CONSTRAINT `decisions_chk_1` CHECK ((`decision_type` in (_utf8mb4'no_action',_utf8mb4'notify',_utf8mb4'notify_safety_only'))),
-  CONSTRAINT `decisions_chk_2` CHECK ((`reason_code` in (_utf8mb4'not_travelling',_utf8mb4'no_consent',_utf8mb4'no_coverage',_utf8mb4'eligible',_utf8mb4'goodwill_alert',_utf8mb4'already_contacted')))
-) ENGINE=InnoDB AUTO_INCREMENT=2431 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  CONSTRAINT `decisions_chk_2` CHECK ((`reason_code` in (_utf8mb4'eligible',_utf8mb4'already_contacted',_utf8mb4'no_consent',_utf8mb4'goodwill_alert',_utf8mb4'ai_high_risk',_utf8mb4'ai_moderate_risk',_utf8mb4'ai_low_risk')))
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -108,7 +110,7 @@ CREATE TABLE `events` (
   CONSTRAINT `events_chk_2` CHECK ((`location_type` in (_utf8mb4'Country',_utf8mb4'Region',_utf8mb4'Admin_area',_utf8mb4'City',_utf8mb4'Airport',_utf8mb4'Flight'))),
   CONSTRAINT `events_chk_3` CHECK ((`severity_level` between 1 and 5)),
   CONSTRAINT `events_chk_4` CHECK ((`source` in (_utf8mb4'Simulator',_utf8mb4'Live API',_utf8mb4'Manual',_utf8mb4'Government')))
-) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -128,7 +130,7 @@ CREATE TABLE `locations` (
   KEY `fk_locations_parent` (`parent_location_id`),
   CONSTRAINT `fk_locations_parent` FOREIGN KEY (`parent_location_id`) REFERENCES `locations` (`location_id`),
   CONSTRAINT `locations_chk_1` CHECK ((`location_type` in (_utf8mb4'Country',_utf8mb4'Region',_utf8mb4'Admin_area',_utf8mb4'City',_utf8mb4'Airport')))
-) ENGINE=InnoDB AUTO_INCREMENT=74 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=49 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -200,4 +202,4 @@ CREATE TABLE `travel` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-02-18 14:00:22
+-- Dump completed on 2026-02-21 23:11:14
