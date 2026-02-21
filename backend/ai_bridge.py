@@ -1,12 +1,17 @@
+import os
 import pymysql
+from dotenv import load_dotenv
 from datetime import date
 
-# Use the password from your .env
+# This looks for the .env file in the current directory
+load_dotenv()
+
 DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "Orch3strator!",
-    "database": "europ_assistance_db"
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "user": os.getenv("DB_USER", "root"),
+    "password": os.getenv("DB_PASSWORD"), # No more hardcoding!
+    "database": os.getenv("DB_NAME", "europ_assistance_db"),
+    "cursorclass": pymysql.cursors.DictCursor
 }
 
 def get_birthday_customers():
@@ -14,7 +19,7 @@ def get_birthday_customers():
     try:
         with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             # The query you just proved works
-            sql = "SELECT id, forename, surname, dob FROM customers WHERE MONTH(dob) = MONTH(CURDATE()) AND DAY(dob) = DAY(CURDATE())"
+            sql = "SELECT customer_id, forename, surname, dob FROM customers WHERE MONTH(dob) = MONTH(CURDATE()) AND DAY(dob) = DAY(CURDATE())"
             cursor.execute(sql)
             return cursor.fetchall()
     finally:

@@ -34,28 +34,33 @@ def seed_everything():
             start_date = datetime(2026, 2, 10) + timedelta(days=random.randint(0, 5))
             end_date = start_date + timedelta(days=random.randint(3, 10))
 
-            # --- 2. CUSTOMER DATA (with 5% Birthday logic) ---
+            
+            # --- 2. CUSTOMER DATA ---
             fn = fake.first_name()
             sn = fake.last_name()
             email = f"{fn[0].lower()}.{sn.lower()}@{fn.lower()}.com"
             
+            # 1. New Language Logic
+            pref_lang = random.choice(['English', 'French', 'German'])
+            
+            # 2. New Opt-in Logic (85% opt-in, 15% opt-out)
+            user_optin = 1 if random.random() > 0.15 else 0
+
             # 5% chance of birthday falling during trip
             if random.random() < 0.05:
-                # Pick a random day between start and end date
                 delta_days = (end_date - start_date).days
                 match_date = start_date + timedelta(days=random.randint(0, delta_days))
-                # Set DoB to that day/month but a random birth year (18-80 years ago)
                 birth_year = datetime.now().year - random.randint(18, 80)
                 dob = match_date.replace(year=birth_year).date()
             else:
                 dob = fake.date_of_birth(minimum_age=18, maximum_age=80)
             
             db.execute(
-                text("""INSERT INTO customers (customer_id, forename, surname, email, dob, optin) 
-                        VALUES (:id, :fn, :sn, :em, :dob, 1)"""),
-                {"id": i, "fn": fn, "sn": sn, "em": email, "dob": dob}
+                text("""INSERT INTO customers (customer_id, forename, surname, email, dob, optin, preferred_language) 
+                        VALUES (:id, :fn, :sn, :em, :dob, :opt, :lang)"""),
+                {"id": i, "fn": fn, "sn": sn, "em": email, "dob": dob, "opt": user_optin, "lang": pref_lang}
             )
-
+            
             # --- 3. POLICY DATA ---
             p_type = 'platinum_all' if random.random() > 0.3 else 'standard_cover'
             db.execute(

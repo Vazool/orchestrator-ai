@@ -1,0 +1,7 @@
+USE europ_assistance_db;
+
+SET FOREIGN_KEY_CHECKS = 0;
+TRUNCATE TABLE actions;
+TRUNCATE TABLE decisions;
+TRUNCATE TABLE events;
+SET FOREIGN_KEY_CHECKS = 1;
