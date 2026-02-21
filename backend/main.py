@@ -1,8 +1,13 @@
+import joblib
+import pandas as pd
+import random
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import datetime
+
 import json
 
 # Your custom connection logic
@@ -18,43 +23,68 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 IS_PROD = os.getenv("PRODUCTION_MODE", "False").lower() == "true"
 
 def generate_ai_message(ctx: dict) -> str:
-    """Uses GPT-4o-mini to write localized, empathetic support messages."""
+    """Uses GPT-4o-mini to write localized, empathetic support messages in the user's preferred language."""
     
-    # Contextual instruction for the birthday logic
+    # 1. New Risk-Level Instruction
+    risk_val = ctx.get('risk_score', 0)
+    if risk_val >= 70:
+        urgency_instruction = "This is a HIGH RISK situation. Use a proactive, protective, and urgent tone."
+    elif risk_val >= 40:
+        urgency_instruction = "This is a MODERATE RISK situation. Use a helpful, advisory, and vigilant tone."
+    else:
+        urgency_instruction = "Standard advisory tone."
+
+    # 2. Birthday Logic
     birthday_instruction = (
         "This is a BIRTHDAY TRIP. Mention the celebration warmly and "
         "reassure them that we are here to protect their special plans." 
-        if ctx['is_birthday_trip'] else "Standard professional support tone."
+        if ctx.get('is_birthday_trip') else ""
     )
+
+    # 3. Language Extraction
+    target_lang = ctx.get('language', 'English')
 
     prompt = f"""
     You are a luxury travel concierge for Europ Assistance. 
-    Write a supportive alert for:
+    Write a supportive alert in {target_lang} for:
     - Customer: {ctx['forename']}
     - Location: {ctx['destination']}
     - Event: {ctx['event_type']} (Severity {ctx['severity']}/5)
+    - Calculated Disruption Risk: {risk_val}%
     - Policy: {ctx['policy_type']}
-    - Language: {ctx['language']}
 
-    Instruction: {birthday_instruction}
-    Requirement: Max 50 words. If Language is not English, write the WHOLE message in that language.
+    Tone Guidance: {urgency_instruction}
+    {birthday_instruction}
+
+    CRITICAL: The entire response must be written in {target_lang}. 
+    Constraint: Keep the message under 3 sentences. Do not use placeholders.
     """
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an empathetic travel support agent."},
+                {
+                    "role": "system", 
+                    "content": f"You are an empathetic travel support agent. You communicate fluently and warmly in {target_lang}."
+                },
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        # Fallback to a safe default if the API hits a snag
+        # Fallback to a safe default (English is safer than a crash, but localized fallback is better if possible)
         return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. Please stay safe."
 
 app = FastAPI()
+
+# Ensure risk_model.pkl is in the same directory as main.py
+try:
+    risk_model = joblib.load("risk_model.pkl")
+    print("Chef: ML Risk Model loaded successfully.")
+except Exception as e:
+    print(f"Chef: Warning! Could not load ML model: {e}")
 
 # Enable CORS for CJ's React App
 app.add_middleware(
@@ -88,7 +118,8 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
         "eligible": 0, 
         "goodwill": 0, 
         "no_consent": 0, 
-        "already_contacted": 0
+        "already_contacted": 0,
+        "no_action":0
     }
 
     IS_PROD = False
@@ -103,21 +134,27 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
             INNER JOIN LocationHierarchy lh ON l.parent_location_id = lh.location_id
         )
         SELECT 
-            t.travel_id, t.customer_id, t.final_destination,
-            c.forename, c.optin, c.preferred_language, pc.policy_type,
+            t.travel_id, 
+            t.customer_id, 
+            t.final_destination,
+            t.start_date,          -- ADDED: Required for ML 'days_before_travel'
+            t.end_date,            -- ADDED: Good practice for debugging
+            c.forename, 
+            c.optin, 
+            c.preferred_language, 
+            c.travel_purpose,      -- ADDED: Required for ML feature
+            pc.policy_type,
             CASE 
                 WHEN DATE_FORMAT(c.dob, '%m-%d') BETWEEN DATE_FORMAT(t.start_date, '%m-%d') AND DATE_FORMAT(t.end_date, '%m-%d')
                 THEN 1 ELSE 0 
             END as is_birthday_trip
         FROM travel t
         JOIN customers c ON t.customer_id = c.customer_id
-        JOIN policies pc ON c.customer_id = pc.customer_id  -- FIXED: Changed table from policycoverage to policies
-        
-
+        JOIN policies pc ON c.customer_id = pc.customer_id 
         WHERE :event_date BETWEEN t.start_date AND t.end_date
         AND (
-            t.arrival_airport = :loc OR 
-            t.destination_region = :loc
+            t.arrival_airport IN (SELECT code FROM LocationHierarchy) OR 
+            t.destination_region IN (SELECT code FROM LocationHierarchy)
         )
     """)
     
@@ -125,6 +162,10 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
         "event_date": payload['event_date'],
         "loc": payload['location_code']
     }).fetchall()
+
+    # DEBUG: Let's see exactly what the Sous Chef brought out of the pantry
+    if impacted:
+        print(f"DEBUG: Columns returned from DB: {impacted[0]._mapping.keys()}")
 
     actual_impacted_count = len(impacted)  # Capture the true count before any safety slicing
 
@@ -169,41 +210,81 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
                 decision, reason = "no_action", "already_contacted"
                 counts["already_contacted"] += 1
                 msg = None
-            
-            # GATE 3: POLICY ELIGIBILITY & GATE 4: GOODWILL
-            else:
-                if traveler.policy_type == 'platinum_all' or traveler.policy_type == payload['event_type']:
-                    decision, reason = "notify", "eligible"
-                    counts["eligible"] += 1
-                else:
-                    decision, reason = "notify_safety_only", "goodwill_alert"
-                    counts["goodwill"] += 1             
+            else: 
+                # --- 1. ML DATA PREP ---
+                # Accessing via _mapping ensures we don't get the AttributeError again
+                t_data = traveler._mapping 
                 
-                # EMERGENCY EXIT: FORCE REAL AI
-                ai_context = {
-                    "forename": traveler.forename,
-                    "destination": traveler.final_destination,
-                    "event_type": payload['event_type'],
-                    "severity": payload['severity_level'],
-                    "policy_type": traveler.policy_type,
-                    "is_birthday_trip": bool(traveler.is_birthday_trip),
-                    "language": traveler.preferred_language
-                }
+                event_date_obj = datetime.strptime(payload['event_date'], "%Y-%m-%d").date()
                 
-                # Directly call the AI writer
-                msg = generate_ai_message(ai_context)
+                # Use the mapping to get the date safely
+                traveler_start = t_data['start_date']
+                if isinstance(traveler_start, str):
+                    traveler_start = datetime.strptime(traveler_start, "%Y-%m-%d").date()
+                
+                days_before_travel = max((traveler_start - event_date_obj).days, 0)
+                
+                policy_map = {"basic": 0, "silver":0, "gold": 1, "platinum": 2, "platinum_all": 2}
+                # Get policy from DB, default to 'basic' (Standard) if missing
+                db_policy = traveler.policy_type.lower() if traveler.policy_type else "basic"
+                policy_feature = policy_map.get(db_policy, 0)
+                
+                purpose_map = {"leisure": 0, "business": 1}
+                travel_purpose_raw = getattr(traveler, 'travel_purpose', 'leisure')
+                purpose_feature = purpose_map.get(travel_purpose_raw.lower(), 0)
 
-                # Database Inserts
+                model_input = pd.DataFrame([{
+                    "severity": payload["severity_level"],
+                    "event_type": payload["event_type"],
+                    "location_type": payload["location_type"],
+                    "days_before_travel": days_before_travel,
+                    "policy_type": policy_feature,
+                    "travel_purpose": purpose_feature
+                }])
+
+                # --- 2. ML PREDICTION ---
+                # Get the score from the 'brain'
+                risk_probability = risk_model.predict_proba(model_input)[:, 1][0]
+                
+                # --- 3. GATE 3: DECISION BASED ON ML SCORE ---
+                if risk_probability >= 0.7:
+                    decision, reason = "notify", "ai_high_risk"
+                    counts["eligible"] += 1
+                elif risk_probability >= 0.4:
+                    decision, reason = "notify_safety_only", "ai_moderate_risk"
+                    counts["goodwill"] += 1
+                else:
+                    decision, reason = "no_action", "ai_low_risk"
+                    counts["no_action"] += 1
+
+                # --- 4. AI MESSAGE GENERATION ---
+                if decision != "no_action":
+                    ai_context = {
+                        "forename": traveler.forename,
+                        "destination": traveler.final_destination,
+                        "event_type": payload['event_type'],
+                        "severity": payload['severity_level'],
+                        "policy_type": traveler.policy_type,
+                        "is_birthday_trip": bool(getattr(traveler, 'is_birthday_trip', False)),
+                        "language": traveler.preferred_language,
+                        "risk_score": round(risk_probability * 100) # Pass risk to AI
+                    }
+                    msg = generate_ai_message(ai_context)
+                else:
+                    msg = None
+        # --- 5. DATABASE RECORDING (End of the loop) ---
+        # This records EVERY decision (Notify OR No Action)
         dec_res = db.execute(text("""
             INSERT INTO decisions (event_id, travel_id, decision_type, reason_code)
             VALUES (:eid, :tid, :dt, :rc)
         """), {"eid": event_id, "tid": traveler.travel_id, "dt": decision, "rc": reason})
-                
-        if msg:  # Only create an action if there's a message to send    
+        
+        # This only creates an action if the AI actually wrote a message
+        if msg:
             db.execute(text("""
                 INSERT INTO actions (decision_id, channel_type, action_status, message)
                 VALUES (:did, 'email', 'queued', :msg)
-            """), {"did": dec_res.lastrowid, "msg": msg})                
+            """), {"did": dec_res.lastrowid, "msg": msg})
 
     db.commit()
 
@@ -221,13 +302,12 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
         "notifications_created": counts["eligible"] + counts["goodwill"],
         "customers_not_impacted": TOTAL_PORTFOLIO - actual_impacted_count,          
 
-        # Use 'detailed_breakdown' here so it matches the /dashboard endpoint
         "detailed_breakdown": [
-            {"category": "Eligible (Full Advice)", "count": counts["eligible"]},
-            {"category": "Partial Cover (Goodwill)", "count": counts["goodwill"]},
-            {"category": "No Consent (Privacy Block)", "count": counts["no_consent"]},
-            {"category": "Already Contacted (Deduplicated)", "count": counts["already_contacted"]},
-            {"category": "No Coverage", "count": 0}
+            {"category": "AI Prediction: High Risk", "count": counts.get("eligible", 0)},
+            {"category": "AI Prediction: Moderate Risk", "count": counts.get("goodwill", 0)},
+            {"category": "No Consent (Privacy Block)", "count": counts.get("no_consent", 0)},
+            {"category": "Already Contacted (Deduplicated)", "count": counts.get("already_contacted", 0)},
+            {"category": "No Coverage (AI Low Risk)", "count": counts.get("no_action", 0)}
         ]
     }
 
@@ -238,6 +318,7 @@ def get_alerts(db: Session = Depends(get_db)):
     results = db.execute(query).fetchall()
     return [dict(r._mapping) for r in results]
 
+
 @app.get("/dashboard")
 def get_dashboard(event_id: int, db: Session = Depends(get_db)):
     query = text("""
@@ -246,16 +327,24 @@ def get_dashboard(event_id: int, db: Session = Depends(get_db)):
         GROUP BY reason_code
     """)
     results = db.execute(query, {"eid": event_id}).fetchall()
+    
+    # Create the dictionary from DB results
     breakdown = {r.reason_code: r.count for r in results}
     
-    # This list now maps 1:1 with your Mermaid table categories
     return {
         "event_id": event_id,
         "detailed_breakdown": [
-            {"category": "Eligible (Full Advice)", "count": breakdown.get('eligible', 0)},
-            {"category": "Partial Cover (Goodwill)", "count": breakdown.get('goodwill_alert', 0)},
+            {"category": "AI Prediction: High Risk", "count": breakdown.get('ai_high_risk', 0)},
+            {"category": "AI Prediction: Moderate Risk", "count": breakdown.get('ai_moderate_risk', 0)},
             {"category": "No Consent (Privacy Block)", "count": breakdown.get('no_consent', 0)},
             {"category": "Already Contacted (Deduplicated)", "count": breakdown.get('already_contacted', 0)},
-            {"category": "No Coverage", "count": breakdown.get('no_coverage', 0)}
+            {"category": "No Coverage (AI Low Risk)", "count": breakdown.get('ai_low_risk', 0)}
         ]
+    }
+
+@app.get("/test-chef")
+def test_chef():
+    return {
+        "model_loaded": risk_model is not None,
+        "model_type": str(type(risk_model))
     }
