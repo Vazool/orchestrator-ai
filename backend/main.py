@@ -77,8 +77,8 @@ def generate_ai_message(ctx: dict) -> str:
         platinum_instruction = (
             f"As a PLATINUM member, explicitly mention their 'Proactive Disruption Benefit' ({ctx['disruption_benefit']}). "
             f"If the event involves travel disruption, inform them that in case flight {ctx.get('flight_number')} "
-            f"is cancelled, we have already secured a backup on the {ctx.get('alt_time')} flight "
-            f"departing from {ctx.get('dep_airport')}."
+            f"is cancelled, an alternative flight will be departing from {ctx.get('dep_airport')} at {ctx.get('alt_time')} "
+            f"They should contact their dedicated case handler for further assistance."
         )
        
     # 4. Birthday Logic
@@ -128,6 +128,21 @@ def generate_ai_message(ctx: dict) -> str:
         return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. Please contact your {ctx['policy_label']} support line."
 
 app = FastAPI()
+
+# ─── DB MIGRATION NOTE ────────────────────────────────────────────────────────
+# Run these once against your database before starting the server:
+#
+#   ALTER TABLE actions ADD COLUMN is_read TINYINT(1) NOT NULL DEFAULT 0;
+#
+#   CREATE TABLE IF NOT EXISTS alert_feedback (
+#       feedback_id  INT AUTO_INCREMENT PRIMARY KEY,
+#       action_id    INT NOT NULL,
+#       mood         ENUM('happy','neutral','sad') NOT NULL,
+#       created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+#       UNIQUE KEY uq_action (action_id),
+#       FOREIGN KEY (action_id) REFERENCES actions(action_id) ON DELETE CASCADE
+#   );
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Ensure risk_model.pkl is in the same directory as main.py
 try:
@@ -192,7 +207,7 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
             c.forename, 
             c.optin, 
             c.preferred_language, 
-            c.travel_purpose,      -- ADDED: Required for ML feature
+            t.travel_purpose,      -- ADDED: Required for ML feature
             pc.policy_type,
             CASE 
                 WHEN DATE_FORMAT(c.dob, '%m-%d') BETWEEN DATE_FORMAT(t.start_date, '%m-%d') AND DATE_FORMAT(t.end_date, '%m-%d')
@@ -379,10 +394,71 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
 
 @app.get("/alerts")
 def get_alerts(db: Session = Depends(get_db)):
-    # Returns latest notifications for CJ's NotificationScreen
-    query = text("SELECT action_id as id, message, created_at as time FROM actions ORDER BY created_at DESC LIMIT 50")
+    """
+    Returns latest notifications for the customer NotificationsScreen.
+    Joins through decisions → travels to surface travel_purpose and isRead status.
+    """
+    
+    query = text("""
+        SELECT
+            a.action_id           AS id,
+            a.message,
+            a.created_at          AS time,
+            a.is_read             AS isRead,
+            COALESCE(t.travel_purpose, 'leisure') AS travel_purpose,
+            COALESCE(pc.policy_type, 0)            AS policy_type
+        FROM actions a
+        LEFT JOIN decisions d ON a.decision_id = d.decision_id
+        LEFT JOIN travel    t ON d.travel_id   = t.travel_id
+        -- Added this bridge to reach the policies table
+        LEFT JOIN policies pc ON t.customer_id = pc.customer_id 
+        ORDER BY a.created_at DESC
+        LIMIT 50
+    """)
+    
     results = db.execute(query).fetchall()
-    return [dict(r._mapping) for r in results]
+    rows = []
+    for r in results:
+        row = dict(r._mapping)
+        # Normalise is_read → Python bool (MySQL may return 0/1)
+        row["isRead"] = bool(row.get("isRead", 0))
+        rows.append(row)
+    return rows
+
+@app.patch("/alerts/{alert_id}/read")
+def mark_alert_read(alert_id: int, db: Session = Depends(get_db)):
+    """Mark a single notification as read when the customer clicks it."""
+    result = db.execute(
+        text("UPDATE actions SET is_read = 1 WHERE action_id = :id"),
+        {"id": alert_id}
+    )
+    db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True, "alert_id": alert_id}
+
+
+@app.post("/alerts/feedback")
+def save_alert_feedback(payload: dict, db: Session = Depends(get_db)):
+    """
+    Persist the emoji feedback the customer gave for a notification.
+    Expects: { "alert_id": int, "mood": "happy" | "neutral" | "sad" }
+    """
+    valid_moods = {"happy", "neutral", "sad"}
+    mood = payload.get("mood", "").lower()
+    if mood not in valid_moods:
+        raise HTTPException(status_code=422, detail=f"mood must be one of {valid_moods}")
+
+    db.execute(
+        text("""
+            INSERT INTO alert_feedback (action_id, mood, created_at)
+            VALUES (:action_id, :mood, NOW())
+            ON DUPLICATE KEY UPDATE mood = :mood, created_at = NOW()
+        """),
+        {"action_id": payload["alert_id"], "mood": mood}
+    )
+    db.commit()
+    return {"ok": True, "alert_id": payload["alert_id"], "mood": mood}
 
 
 @app.get("/dashboard")
