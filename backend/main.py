@@ -16,6 +16,34 @@ from database import engine, SessionLocal, get_db
 import os
 from openai import OpenAI
 
+# --- Global Policy Configuration ---
+POLICY_FEATURES = {
+    0: {  # Basic
+        "label": "Basic",
+        "medical": "up to £2m",
+        "repatriation": "Standard",
+        "cancellation": "specified causes only",
+        "concierge": "None",
+        "disruption": "None"
+    },
+    1: {  # Standard
+        "label": "Standard",
+        "medical": "up to £5m",
+        "repatriation": "Standard",
+        "cancellation": "extended causes",
+        "concierge": "24/7 helpline",
+        "disruption": "None"
+    },
+    2: {  # Platinum
+        "label": "Platinum",
+        "medical": "unlimited / £10m+",
+        "repatriation": "Priority + upgraded travel",
+        "cancellation": "incl. discretionary cancel for work issues",
+        "concierge": "dedicated case handler",
+        "disruption": "proactive disruption alerts + auto-claims"
+    }
+}
+
 # Initialize the OpenAI Client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -23,7 +51,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 IS_PROD = os.getenv("PRODUCTION_MODE", "False").lower() == "true"
 
 def generate_ai_message(ctx: dict) -> str:
-    """Uses GPT-4o-mini to write localized, empathetic support messages in the user's preferred language."""
+    """Uses GPT-4o-mini to write localized, empathetic support messages incorporating policy-specific facts."""
     
     # 1. New Risk-Level Instruction
     risk_val = ctx.get('risk_score', 0)
@@ -34,14 +62,33 @@ def generate_ai_message(ctx: dict) -> str:
     else:
         urgency_instruction = "Standard advisory tone."
 
-    # 2. Birthday Logic
+    # 2. Dynamic Policy Fact Injection
+    # We use these specific facts to make the message authoritative and high-value
+    policy_facts = (
+        f"The customer has {ctx['policy_label']} coverage. "
+        f"Key benefits to mention if relevant: Medical cover {ctx['medical_limit']}, "
+        f"Repatriation: {ctx['repatriation']}, Cancellation: {ctx['cancel_terms']}. "
+        f"Concierge Access: {ctx['concierge_perk']}."
+    )
+
+    # 3. Platinum "Premium Reassurance" & Disruption Logic
+    platinum_instruction = ""
+    if ctx.get('policy_type') == 2:
+        platinum_instruction = (
+            f"As a PLATINUM member, explicitly mention their 'Proactive Disruption Benefit' ({ctx['disruption_benefit']}). "
+            f"If the event involves travel disruption, inform them that in case flight {ctx.get('flight_number')} "
+            f"is cancelled, we have already secured a backup on the {ctx.get('alt_time')} flight "
+            f"departing from {ctx.get('dep_airport')}."
+        )
+       
+    # 4. Birthday Logic
     birthday_instruction = (
         "This is a BIRTHDAY TRIP. Mention the celebration warmly and "
         "reassure them that we are here to protect their special plans." 
         if ctx.get('is_birthday_trip') else ""
     )
 
-    # 3. Language Extraction
+    # 5. Language Extraction
     target_lang = ctx.get('language', 'English')
 
     prompt = f"""
@@ -51,13 +98,16 @@ def generate_ai_message(ctx: dict) -> str:
     - Location: {ctx['destination']}
     - Event: {ctx['event_type']} (Severity {ctx['severity']}/5)
     - Calculated Disruption Risk: {risk_val}%
-    - Policy: {ctx['policy_type']}
-
+    
+    Policy Context: {policy_facts}
+    
     Tone Guidance: {urgency_instruction}
+    {platinum_instruction}
     {birthday_instruction}
 
-    CRITICAL: The entire response must be written in {target_lang}. 
-    Constraint: Keep the message under 3 sentences. Do not use placeholders.
+    Constraint: Keep the message under 4 sentences. Do not use placeholders. 
+    Incorporate 1-2 specific policy facts (like medical limits or dedicated handlers) to show value.
+    CRITICAL: Output MUST be in {target_lang}.
     """
 
     try:
@@ -74,8 +124,8 @@ def generate_ai_message(ctx: dict) -> str:
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        # Fallback to a safe default (English is safer than a crash, but localized fallback is better if possible)
-        return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. Please stay safe."
+        print(f"AI Error: {e}")
+        return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. Please contact your {ctx['policy_label']} support line."
 
 app = FastAPI()
 
@@ -224,10 +274,12 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
                 
                 days_before_travel = max((traveler_start - event_date_obj).days, 0)
                 
-                policy_map = {"basic": 0, "silver":0, "gold": 1, "platinum": 2, "platinum_all": 2}
-                # Get policy from DB, default to 'basic' (Standard) if missing
-                db_policy = traveler.policy_type.lower() if traveler.policy_type else "basic"
-                policy_feature = policy_map.get(db_policy, 0)
+                # --- 1. ML DATA PREP ---
+                t_data = traveler._mapping 
+
+                # Get the integer directly from the DB (0, 1, or 2)
+                # We default to 0 (Standard) if for some reason it's None
+                policy_feature = traveler.policy_type if traveler.policy_type is not None else 0
                 
                 purpose_map = {"leisure": 0, "business": 1}
                 travel_purpose_raw = getattr(traveler, 'travel_purpose', 'leisure')
@@ -259,6 +311,9 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
 
                 # --- 4. AI MESSAGE GENERATION ---
                 if decision != "no_action":
+                    alt_flight_time = f"{random.randint(11, 21)}:{random.choice(['00', '15', '30', '45'])}"
+                    policy_info = POLICY_FEATURES.get(traveler.policy_type, POLICY_FEATURES[0])
+
                     ai_context = {
                         "forename": traveler.forename,
                         "destination": traveler.final_destination,
@@ -267,11 +322,22 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
                         "policy_type": traveler.policy_type,
                         "is_birthday_trip": bool(getattr(traveler, 'is_birthday_trip', False)),
                         "language": traveler.preferred_language,
-                        "risk_score": round(risk_probability * 100) # Pass risk to AI
+                        "risk_score": round(risk_probability * 100),
+                        "flight_number": getattr(traveler, 'flight_number', 'EA1234'),
+                        "dep_airport": getattr(traveler, 'departure_airport', 'LHR'),
+                        "alt_time": alt_flight_time,
+                        # --- NEW POLICY FACT INJECTION ---
+                        "policy_label": policy_info["label"],
+                        "medical_limit": policy_info["medical"],
+                        "repatriation": policy_info["repatriation"],
+                        "cancel_terms": policy_info["cancellation"],
+                        "concierge_perk": policy_info["concierge"],
+                        "disruption_benefit": policy_info["disruption"]
                     }
                     msg = generate_ai_message(ai_context)
                 else:
                     msg = None
+
         # --- 5. DATABASE RECORDING (End of the loop) ---
         # This records EVERY decision (Notify OR No Action)
         dec_res = db.execute(text("""

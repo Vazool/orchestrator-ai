@@ -34,7 +34,7 @@ CREATE TABLE `actions` (
   CONSTRAINT `actions_ibfk_1` FOREIGN KEY (`decision_id`) REFERENCES `decisions` (`decision_id`),
   CONSTRAINT `actions_chk_1` CHECK ((`channel_type` in (_utf8mb4'sms',_utf8mb4'email',_utf8mb4'push',_utf8mb4'whatsapp',_utf8mb4'in_app'))),
   CONSTRAINT `actions_chk_2` CHECK ((`action_status` in (_utf8mb4'queued',_utf8mb4'sent',_utf8mb4'failed')))
-) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -83,7 +83,7 @@ CREATE TABLE `decisions` (
   CONSTRAINT `decisions_ibfk_2` FOREIGN KEY (`event_id`) REFERENCES `events` (`event_id`),
   CONSTRAINT `decisions_chk_1` CHECK ((`decision_type` in (_utf8mb4'no_action',_utf8mb4'notify',_utf8mb4'notify_safety_only'))),
   CONSTRAINT `decisions_chk_2` CHECK ((`reason_code` in (_utf8mb4'eligible',_utf8mb4'already_contacted',_utf8mb4'no_consent',_utf8mb4'goodwill_alert',_utf8mb4'ai_high_risk',_utf8mb4'ai_moderate_risk',_utf8mb4'ai_low_risk')))
-) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -143,7 +143,7 @@ DROP TABLE IF EXISTS `policies`;
 CREATE TABLE `policies` (
   `policy_id` int NOT NULL AUTO_INCREMENT,
   `customer_id` int NOT NULL,
-  `policy_type` varchar(100) DEFAULT NULL,
+  `policy_type` int DEFAULT NULL,
   `active_status` tinyint DEFAULT '1',
   `policy_coverage` text,
   `policy_coverage_json` json NOT NULL DEFAULT (json_object(_utf8mb4'weather_warning',false,_utf8mb4'flight_disruption',false,_utf8mb4'gov_advice_change',false,_utf8mb4'major_event',false,_utf8mb4'safety_only',false)),
@@ -187,6 +187,8 @@ CREATE TABLE `travel` (
   `start_date` date NOT NULL,
   `end_date` date NOT NULL,
   `final_destination` varchar(100) DEFAULT NULL,
+  `departure_airport` char(3) DEFAULT 'LHR',
+  `flight_number` varchar(10) DEFAULT NULL,
   PRIMARY KEY (`travel_id`),
   KEY `customer_id` (`customer_id`),
   CONSTRAINT `travel_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`customer_id`)
@@ -202,4 +204,4 @@ CREATE TABLE `travel` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-02-21 23:11:14
+-- Dump completed on 2026-02-22  0:09:47
