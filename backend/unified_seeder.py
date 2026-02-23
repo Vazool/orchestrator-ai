@@ -5,7 +5,7 @@ from sqlalchemy import text
 from database import SessionLocal
 from datetime import datetime, timedelta
 
-fake = Faker(['en_GB', 'fr_FR', 'nl_BE']) # Added Flemish support
+fake = Faker(['en_GB', 'fr_FR', 'nl_BE'])
 
 destinations = [
     ('Cannes', 'NCE', 'Alpes-Maritimes'), ('Antibes', 'NCE', 'Alpes-Maritimes'), 
@@ -21,7 +21,6 @@ destinations = [
 hubs = ['MAD', 'LHR', 'CDG']
 
 def generate_flight_no():
-    """Generates a flight number like LHR7721"""
     letters = "".join(random.choices(string.ascii_uppercase, k=3))
     numbers = "".join(random.choices(string.digits, k=4))
     return f"{letters}{numbers}"
@@ -36,30 +35,28 @@ def seed_everything():
         db.execute(text("TRUNCATE TABLE customers;"))
         db.execute(text("SET FOREIGN_KEY_CHECKS = 1;"))
 
-        print("Generating 1000 high-fidelity records with new ML features...")
+        print("Generating 1000 records with new table locations...")
         for i in range(1, 1001):
-            # --- 1. TRAVEL DATA PREP ---
+            # --- 1. DATA PREP ---
             town, dest_airport, region = random.choice(destinations)
             start_date = datetime(2026, 2, 10) + timedelta(days=random.randint(0, 5))
             end_date = start_date + timedelta(days=random.randint(3, 10))
             
-            # Flight Details
-            dep_airport = random.choice([h for h in hubs if h != dest_airport])
-            flight_no = generate_flight_no()
+            # Channel and Purpose
+            channel = random.choice(['app_push', 'email', 'sms'])
+            travel_purpose = random.choice(['leisure', 'business'])
             
             # --- 2. CUSTOMER DATA ---
             fn = fake.first_name()
             sn = fake.last_name()
             email = f"{fn[0].lower()}.{sn.lower()}@{fn.lower()}.com"
+            user_optin = 1 if random.random() > 0.15 else 0
             
-            # Language Weights: 50% EN, 20% FR, 20% DE, 10% Flemish
+            # Language Weights
             pref_lang = random.choices(
                 ['English', 'French', 'German', 'Flemish'], 
                 weights=[0.5, 0.2, 0.2, 0.1], k=1
             )[0]
-            
-            user_optin = 1 if random.random() > 0.15 else 0
-            travel_purpose = random.choice(['leisure', 'business'])
 
             # Birthday Logic
             if random.random() < 0.05:
@@ -70,28 +67,35 @@ def seed_everything():
                 dob = fake.date_of_birth(minimum_age=18, maximum_age=80)
             
             db.execute(
-                text("""INSERT INTO customers (customer_id, forename, surname, email, dob, optin, preferred_language, travel_purpose) 
-                        VALUES (:id, :fn, :sn, :em, :dob, :opt, :lang, :tp)"""),
-                {"id": i, "fn": fn, "sn": sn, "em": email, "dob": dob, "opt": user_optin, "lang": pref_lang, "tp": travel_purpose}
+                text("""INSERT INTO customers (customer_id, forename, surname, email, dob, optin, preferred_language, country, channel_type) 
+                        VALUES (:id, :fn, :sn, :em, :dob, :opt, :lang, :ctry, :ct)"""),
+                {
+                    "id": i, "fn": fn, "sn": sn, "em": email, "dob": dob, 
+                    "opt": user_optin, "lang": pref_lang, "ctry": "United Kingdom", "ct": channel
+                }
             )
             
-            # --- 3. POLICY DATA (Standardized 0, 1, 2) ---
-            # 30% Platinum (2), 30% Gold (1), 40% Standard (0)
+            # --- 3. POLICY DATA ---
             p_type = random.choices([0, 1, 2], weights=[0.4, 0.3, 0.3], k=1)[0]
             db.execute(
                 text("INSERT INTO policies (customer_id, policy_type) VALUES (:cid, :pt)"),
                 {"cid": i, "pt": p_type}
             )
 
-            # --- 4. TRAVEL DATA INSERT (With Hubs & Flight Numbers) ---
+            # --- 4. TRAVEL DATA (Removed channel_type from here) ---
             db.execute(
-                text("""INSERT INTO travel (customer_id, arrival_airport, departure_airport, flight_number, destination_region, final_destination, start_date, end_date) 
-                        VALUES (:cid, :air, :dep, :fno, :reg, :town, :sd, :ed)"""),
-                {"cid": i, "air": dest_airport, "dep": dep_airport, "fno": flight_no, "reg": region, "town": town, "sd": start_date, "ed": end_date}
+                text("""INSERT INTO travel (customer_id, arrival_airport, departure_airport, flight_number, 
+                        destination_region, final_destination, start_date, end_date, travel_purpose) 
+                        VALUES (:cid, :air, :dep, :fno, :reg, :town, :sd, :ed, :tp)"""),
+                {
+                    "cid": i, "air": dest_airport, "dep": random.choice([h for h in hubs if h != dest_airport]), 
+                    "fno": generate_flight_no(), "reg": region, "town": town, "sd": start_date, "ed": end_date,
+                    "tp": travel_purpose
+                }
             )
 
         db.commit()
-        print("Success! 1000 records seeded with localized languages and flight numbers.")
+        print("Success! 1000 records seeded. travel_purpose is now in the travel table.")
     except Exception as e:
         print(f"Error during seeding: {e}")
         db.rollback()
