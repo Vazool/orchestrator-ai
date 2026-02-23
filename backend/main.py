@@ -13,6 +13,9 @@ import json
 # Your custom connection logic
 from database import engine, SessionLocal, get_db
 
+# GDPR Privacy Vault
+from privacy_engine import demo_vault
+
 import os
 from openai import OpenAI
 
@@ -51,8 +54,13 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 IS_PROD = os.getenv("PRODUCTION_MODE", "False").lower() == "true"
 
 def generate_ai_message(ctx: dict) -> str:
-    """Uses GPT-4o-mini to write localized, empathetic support messages incorporating policy-specific facts."""
+    """Uses GPT-4o-mini to write messages using tokens instead of real names."""
     
+    # --- STAGE 1: MASKING (Brussels Protocol) ---
+    # We swap the real name for a token like {{forename_1}}
+    real_forename = ctx.get('forename', 'Traveler')
+    masked_forename = demo_vault.mask_customer_data(real_forename)
+
     # 1. New Risk-Level Instruction
     risk_val = ctx.get('risk_score', 0)
     if risk_val >= 70:
@@ -63,7 +71,6 @@ def generate_ai_message(ctx: dict) -> str:
         urgency_instruction = "Standard advisory tone."
 
     # 2. Dynamic Policy Fact Injection
-    # We use these specific facts to make the message authoritative and high-value
     policy_facts = (
         f"The customer has {ctx['policy_label']} coverage. "
         f"Key benefits to mention if relevant: Medical cover {ctx['medical_limit']}, "
@@ -71,16 +78,17 @@ def generate_ai_message(ctx: dict) -> str:
         f"Concierge Access: {ctx['concierge_perk']}."
     )
 
-    # 3. Platinum "Premium Reassurance" & Disruption Logic
+    # 3. Platinum "Option Identification" Logic (The 'Brussels Scout' approach)
     platinum_instruction = ""
     if ctx.get('policy_type') == 2:
         platinum_instruction = (
-            f"As a PLATINUM member, explicitly mention their 'Proactive Disruption Benefit' ({ctx['disruption_benefit']}). "
-            f"If the event involves travel disruption, inform them that in case flight {ctx.get('flight_number')} "
-            f"is cancelled, an alternative flight will be departing from {ctx.get('dep_airport')} at {ctx.get('alt_time')} "
-            f"They should contact their dedicated case handler for further assistance."
+            f"As a PLATINUM member, mention their 'Proactive Disruption Benefit' ({ctx['disruption_benefit']}). "
+            f"Crucially, inform them that our team has already IDENTIFIED a potential alternative flight: "
+            f"{ctx.get('flight_number')} departing from {ctx.get('dep_airport')} at {ctx.get('alt_time')}. "
+            f"Clarify that this is an available option we have found for them, and they should "
+            f"contact their dedicated case handler to discuss or finalize arrangements if they wish to proceed."
         )
-       
+    
     # 4. Birthday Logic
     birthday_instruction = (
         "This is a BIRTHDAY TRIP. Mention the celebration warmly and "
@@ -91,10 +99,11 @@ def generate_ai_message(ctx: dict) -> str:
     # 5. Language Extraction
     target_lang = ctx.get('language', 'English')
 
+    # UPDATED PROMPT: Notice we use masked_forename and a new Constraint
     prompt = f"""
     You are a luxury travel concierge for Europ Assistance. 
     Write a supportive alert in {target_lang} for:
-    - Customer: {ctx['forename']}
+    - Customer: {masked_forename}
     - Location: {ctx['destination']}
     - Event: {ctx['event_type']} (Severity {ctx['severity']}/5)
     - Calculated Disruption Risk: {risk_val}%
@@ -105,9 +114,12 @@ def generate_ai_message(ctx: dict) -> str:
     {platinum_instruction}
     {birthday_instruction}
 
-    Constraint: Keep the message under 4 sentences. Do not use placeholders. 
-    Incorporate 1-2 specific policy facts (like medical limits or dedicated handlers) to show value.
-    CRITICAL: Output MUST be in {target_lang}.
+    Constraints: 
+    1. Keep the message under 4 sentences. 
+    2. Use the exact tag {masked_forename} to address the customer. 
+    3. Do NOT invent a name or use generic greetings like 'Dear Customer'.
+    4. Incorporate 1-2 specific policy facts.
+    5. Output MUST be in {target_lang}.
     """
 
     try:
@@ -116,16 +128,26 @@ def generate_ai_message(ctx: dict) -> str:
             messages=[
                 {
                     "role": "system", 
-                    "content": f"You are an empathetic travel support agent. You communicate fluently and warmly in {target_lang}."
+                    "content": f"You are an empathetic support agent. Use the provided {{tags}} for names exactly as they appear."
                 },
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7
         )
-        return response.choices[0].message.content.strip()
+        
+        # --- STAGE 2: REHYDRATION ---
+        # The AI returns text containing "{{forename_1}}"
+        raw_content = response.choices[0].message.content.strip()
+        
+        # We swap it back to the real name locally
+        final_message = demo_vault.rehydrate_message(raw_content)
+        
+        return final_message
+
     except Exception as e:
         print(f"AI Error: {e}")
-        return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. Please contact your {ctx['policy_label']} support line."
+        # Local fallback also uses the real name safely
+        return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. {real_forename}, please contact your {ctx['policy_label']} support line."
 
 app = FastAPI()
 
@@ -484,9 +506,49 @@ def get_dashboard(event_id: int, db: Session = Depends(get_db)):
         ]
     }
 
+# ========================
+#  TEST BLOCK 
+# ========================
+
 @app.get("/test-chef")
 def test_chef():
     return {
         "model_loaded": risk_model is not None,
         "model_type": str(type(risk_model))
     }
+
+if __name__ == "__main__":
+    # The context block you already created
+    test_ctx = {
+        "forename": "Boudewijn",
+        "destination": "Nice (NCE)",
+        "event_type": "Flight Delay",
+        "severity": 4,
+        "risk_score": 85,
+        "policy_type": 2, 
+        "policy_label": "Platinum Plus",
+        "medical_limit": "Unlimited",
+        "repatriation": "Included (Private Jet)",
+        "cancel_terms": "Full Refund",
+        "concierge_perk": "24/7 Priority Handler",
+        "disruption_benefit": "Alternative Flight Search",
+        "flight_number": "SN3587",
+        "dep_airport": "BRU",
+        "alt_time": "14:30",
+        "is_birthday_trip": True,
+        "language": "Flemish"
+    }
+
+    print("\n--- 🛡️ BRUSSELS PROTOCOL: PRIVACY SHIELD TEST ---")
+    
+    # Execute the function
+    final_output = generate_ai_message(test_ctx)
+    
+    print("\nFINAL REHYDRATED MESSAGE:")
+    print(f"[{final_output}]")
+    
+    # Paranoia Check: Verify the name 'Boudewijn' is actually back in the string
+    if "Boudewijn" in final_output:
+        print("\n✅ VERIFICATION SUCCESS: PII successfully rehydrated locally.")
+    else:
+        print("\n❌ VERIFICATION FAILED: Token was not replaced.")

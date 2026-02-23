@@ -191,7 +191,9 @@ function NotificationItem({ id: alertId, message, time, isRead: initialRead, tra
     return { flag: "🌐", label: "EN", color: "#1d4ed8" };
   };
 
-  const lang = getLanguageHint(message);
+  /*const lang = getLanguageHint(message);*/
+
+  const lang = { flag: "🌐", label: "INTL", color: "#1d4ed8" };
 
   const travelConfig = travelType === "business"
     ? { icon: "💼", label: "Business", bg: "#F0FDF4", border: "#BBF7D0", color: "#15803d" }

@@ -517,7 +517,8 @@ export default function OperatorScreen() {
                 <div style={{ ...sankeyStyles.title, marginBottom:"12px" }}>
                   Dashboard — Event <code style={S.code}>#{dashboard.event_id}</code>
                 </div>
-                <DonutChart data={dashboard.detailed_breakdown} title="DB Confirmed Breakdown" colors={decisionPieColors}/>
+                {/* REMOVE DUPLICATE PIE CHART HERE */}
+                {/*<DonutChart data={dashboard.detailed_breakdown} title="DB Confirmed Breakdown" colors={decisionPieColors}/>*/}
                 <details style={S.rawDetails}>
                   <summary style={S.rawSum}>View raw JSON</summary>
                   <pre style={S.rawPre}>{JSON.stringify(dashboard, null, 2)}</pre>
