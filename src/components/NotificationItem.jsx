@@ -3,11 +3,9 @@ import { useState } from "react";
 /* ─── Feedback Dialog ─────────────────────────────────────────────────────── */
 function FeedbackDialog({ onClose, onSelect }) {
   const emojis = [
-    { icon: "😢", label: "Very Upset",  mood: "sad" },
-    { icon: "😕", label: "Unsatisfied", mood: "sad" },
-    { icon: "😐", label: "Neutral",     mood: "neutral" },
-    { icon: "🙂", label: "Satisfied",   mood: "happy" },
-    { icon: "😄", label: "Very Happy",  mood: "happy" },
+    { icon: "😢", label: "Unhappy",  mood: "sad" },
+    { icon: "😐", label: "Neutral",  mood: "neutral" },
+    { icon: "😄", label: "Happy",    mood: "happy" },
   ];
   const [hovered, setHovered] = useState(null);
 
@@ -127,22 +125,108 @@ function HappyScreen({ onClose }) {
   );
 }
 
-/* ─── Main Component ──────────────────────────────────────────────────────── */
-function NotificationItem({ id: alertId, message, time, isRead: initialRead, travelType, index = 0, onMarkRead }) {
-  const [isRead, setIsRead] = useState(initialRead);
-  const [dialog, setDialog] = useState(null); // null | "feedback" | "assist" | "happy"
+/* ─── Why Dialog ──────────────────────────────────────────────────────────── */
+function WhyDialog({ onClose, onOptOut, optedOut }) {
+  return (
+    <div style={dlg.overlay} onClick={onClose}>
+      <div style={{ ...dlg.modal, maxWidth: "460px" }} onClick={e => e.stopPropagation()}>
+        <button style={dlg.closeBtn} onClick={onClose} aria-label="Close">✕</button>
 
-  const handleClick = () => {
+        <div style={dlg.header}>
+          <div style={{ ...dlg.headerIcon, background: "#F0FDF4", border: "1.5px solid #BBF7D0" }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div>
+            <h3 style={dlg.title}>Why are you seeing this?</h3>
+            <p style={dlg.subtitle}>Your notification preferences explained</p>
+          </div>
+        </div>
+
+        <div style={why.body}>
+          <p style={why.para}>
+            You're receiving these travel alerts because you <strong>opted in</strong> to proactive notifications when you purchased your Europ Assistance travel insurance policy.
+          </p>
+
+          <div style={why.infoGrid}>
+            {[
+              { icon: "🛡", title: "Your policy cover", text: "Alerts are matched to your specific policy tier and destination." },
+              { icon: "📍", title: "Location-based", text: "We monitor events near your destination in real time." },
+              { icon: "🌐", title: "Your language", text: "Messages are personalised and sent in your preferred language." },
+              { icon: "🔒", title: "GDPR compliant", text: "Your data is handled under the Brussels Privacy Protocol. We never share your PII with third-party AI providers." },
+            ].map((item, i) => (
+              <div key={i} style={why.infoItem}>
+                <span style={why.infoIcon}>{item.icon}</span>
+                <div>
+                  <div style={why.infoTitle}>{item.title}</div>
+                  <div style={why.infoText}>{item.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {optedOut ? (
+            <div style={why.optedOutBanner}>
+              ✓ You have successfully opted out. You will no longer receive travel alerts.
+            </div>
+          ) : (
+            <p style={why.smallPrint}>
+              You can withdraw your consent at any time. Opting out will prevent future notifications but does not affect your insurance cover.
+            </p>
+          )}
+        </div>
+
+        <div style={why.footer}>
+          {!optedOut && (
+            <button style={why.optOutBtn} onClick={onOptOut}>
+              Opt Out
+            </button>
+          )}
+          <button style={why.closeBtn} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function NotificationItem({ id: alertId, customerId, message, time, isRead: initialRead, travelType, index = 0, onMarkRead }) {
+  const [isRead, setIsRead] = useState(initialRead);
+  const [dialog, setDialog] = useState(null); // null | "feedback" | "assist" | "happy" | "why"
+  const [optedOut, setOptedOut] = useState(false);
+
+  const handleCardClick = () => {
+    // Clicking the card body only marks it as read — does NOT open feedback
     if (!isRead) {
       setIsRead(true);
       if (onMarkRead) onMarkRead();
-      // Persist read status to backend
       if (alertId) {
         fetch(`http://localhost:5000/alerts/${alertId}/read`, { method: "PATCH" })
           .catch(err => console.error("Mark-read failed:", err));
       }
     }
+  };
+
+  const handleFeedbackClick = (e) => {
+    e.stopPropagation();
     setDialog("feedback");
+  };
+
+  const handleWhyClick = (e) => {
+    e.stopPropagation();
+    setDialog("why");
+  };
+
+  const handleOptOut = () => {
+    if (!customerId) return;
+    fetch(`http://localhost:5000/customers/${customerId}/opt-out`, { method: "PATCH" })
+      .then(() => setOptedOut(true))
+      .catch(err => console.error("Opt-out failed:", err));
   };
 
   const handleEmojiSelect = (mood) => {
@@ -176,24 +260,7 @@ function NotificationItem({ id: alertId, message, time, isRead: initialRead, tra
     } catch { return t; }
   };
 
-  const getLanguageHint = (msg) => {
-    if (!msg) return { flag: "🌐", label: "EN", color: "#1d4ed8" };
-    if (/[\u4E00-\u9FFF]/.test(msg))   return { flag: "🇨🇳", label: "ZH", color: "#dc2626" };
-    if (/[\u3040-\u30FF]/.test(msg))   return { flag: "🇯🇵", label: "JA", color: "#dc2626" };
-    if (/[\u0600-\u06FF]/.test(msg))   return { flag: "🇸🇦", label: "AR", color: "#15803d" };
-    if (/[\u0590-\u05FF]/.test(msg))   return { flag: "🇮🇱", label: "HE", color: "#0369a1" };
-    if (/[\u0400-\u04FF]/.test(msg))   return { flag: "🇷🇺", label: "RU", color: "#1d4ed8" };
-    if (/[àâçéèêëîïôùûüÿ]/i.test(msg)) return { flag: "🇫🇷", label: "FR", color: "#1d4ed8" };
-    if (/[äöüß]/i.test(msg))           return { flag: "🇩🇪", label: "DE", color: "#1d4ed8" };
-    if (/[ñáéíóúü]/i.test(msg))        return { flag: "🇪🇸", label: "ES", color: "#dc2626" };
-    if (/[ãõçáéíóú]/i.test(msg))       return { flag: "🇵🇹", label: "PT", color: "#15803d" };
-    if (/[àèéìòù]/i.test(msg))         return { flag: "🇮🇹", label: "IT", color: "#15803d" };
-    return { flag: "🌐", label: "EN", color: "#1d4ed8" };
-  };
-
-  /*const lang = getLanguageHint(message);*/
-
-  const lang = { flag: "🌐", label: "INTL", color: "#1d4ed8" };
+  
 
   const travelConfig = travelType === "business"
     ? { icon: "💼", label: "Business", bg: "#F0FDF4", border: "#BBF7D0", color: "#15803d" }
@@ -205,12 +272,8 @@ function NotificationItem({ id: alertId, message, time, isRead: initialRead, tra
         style={{
           ...styles.card,
           ...(isRead ? styles.cardRead : styles.cardUnread),
-          cursor: "pointer",
         }}
-        onClick={handleClick}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => e.key === "Enter" && handleClick()}
+        onClick={handleCardClick}
       >
         {/* Left accent bar */}
         <div style={{
@@ -224,15 +287,6 @@ function NotificationItem({ id: alertId, message, time, isRead: initialRead, tra
           {/* Top meta row */}
           <div style={styles.metaRow}>
             <div style={styles.metaLeft}>
-              <span style={{
-                ...styles.langChip,
-                background: lang.color + "12",
-                border: `1px solid ${lang.color}30`,
-                color: lang.color,
-              }}>
-                {lang.flag}&nbsp;{lang.label}
-              </span>
-
               {/* Travel type tag */}
               <span style={{
                 ...styles.travelChip,
@@ -283,9 +337,22 @@ function NotificationItem({ id: alertId, message, time, isRead: initialRead, tra
                   <path d="M10.5 19h17M19 10.5v17" stroke="white" strokeWidth="2.2" strokeLinecap="round"/>
                 </svg>
               </div>
-              <span style={styles.footerText}>Europ Assistance Travel Alert</span>
+              <button
+              onClick={handleWhyClick}
+              style={styles.whyBtn}
+              aria-label="Why am I seeing this?"
+            >
+              Why am I seeing this?
+            </button>
             </div>
-            <span style={styles.clickHint}>Click to respond →</span>
+            
+            <button
+              onClick={handleFeedbackClick}
+              style={styles.feedbackBtn}
+              aria-label="Give feedback"
+            >
+              Click here to respond →
+            </button>
           </div>
         </div>
       </div>
@@ -293,6 +360,7 @@ function NotificationItem({ id: alertId, message, time, isRead: initialRead, tra
       {dialog === "feedback"  && <FeedbackDialog onClose={() => setDialog(null)} onSelect={handleEmojiSelect} />}
       {dialog === "assist"    && <AssistanceScreen onClose={() => setDialog(null)} />}
       {dialog === "happy"     && <HappyScreen onClose={() => setDialog(null)} />}
+      {dialog === "why"       && <WhyDialog onClose={() => setDialog(null)} onOptOut={handleOptOut} optedOut={optedOut} />}
     </>
   );
 }
@@ -391,12 +459,28 @@ const styles = {
   },
   footerLeft: { display: "flex", alignItems: "center", gap: "7px" },
   eaLogo: { flexShrink: 0 },
-  footerText: { fontSize: "0.7rem", color: "#94a3b8", fontWeight: 500 },
-  clickHint: {
+  
+  whyBtn: {
     fontSize: "0.68rem",
-    color: "#94a3b8",
-    fontWeight: 500,
-    fontStyle: "italic",
+    fontWeight: 600,
+    color: "#64748b",
+    background: "transparent",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    padding: "4px 10px",
+    cursor: "pointer",
+    fontFamily: "'Inter', sans-serif",
+  },
+    feedbackBtn: {fontSize: "0.68rem",
+    fontWeight: 600,
+    color: "#1d4ed8",
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+    borderRadius: "8px",
+    padding: "4px 10px",
+    cursor: "pointer",
+    fontFamily: "'Inter', sans-serif",
+    transition: "background 0.15s ease",
   },
 };
 
@@ -600,6 +684,39 @@ const happy = {
     fontFamily: "'Inter', sans-serif",
     cursor: "pointer",
     boxShadow: "0 4px 18px rgba(29,78,216,0.25)",
+  },
+};
+
+/* ─── Why Styles ──────────────────────────────────────────────────────────── */
+const why = {
+  body: { display: "flex", flexDirection: "column", gap: "16px", marginBottom: "1.5rem" },
+  para: { fontSize: "0.88rem", color: "#334155", lineHeight: 1.7, fontFamily: "'Inter', sans-serif" },
+  infoGrid: { display: "flex", flexDirection: "column", gap: "10px" },
+  infoItem: {
+    display: "flex", alignItems: "flex-start", gap: "12px",
+    background: "#f8fafc", border: "1px solid #e2e8f0",
+    borderRadius: "10px", padding: "12px 14px",
+  },
+  infoIcon: { fontSize: "1.2rem", lineHeight: 1, flexShrink: 0, marginTop: "1px" },
+  infoTitle: { fontSize: "0.78rem", fontWeight: 700, color: "#1e293b", fontFamily: "'Inter', sans-serif", marginBottom: "2px" },
+  infoText:  { fontSize: "0.74rem", color: "#64748b", lineHeight: 1.5, fontFamily: "'Inter', sans-serif" },
+  smallPrint: { fontSize: "0.74rem", color: "#94a3b8", lineHeight: 1.6, fontFamily: "'Inter', sans-serif" },
+  optedOutBanner: {
+    background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: "10px",
+    padding: "12px 16px", fontSize: "0.82rem", fontWeight: 600,
+    color: "#15803d", fontFamily: "'Inter', sans-serif",
+  },
+  footer: { display: "flex", gap: "10px", justifyContent: "flex-end" },
+  optOutBtn: {
+    background: "#FEF2F2", border: "1.5px solid #FECACA", borderRadius: "10px",
+    color: "#DC2626", padding: "10px 20px", fontSize: "0.85rem",
+    fontWeight: 700, fontFamily: "'Inter', sans-serif", cursor: "pointer",
+  },
+  closeBtn: {
+    background: "linear-gradient(135deg, #1e3a8a, #1d4ed8)", border: "none",
+    borderRadius: "10px", color: "#fff", padding: "10px 24px",
+    fontSize: "0.85rem", fontWeight: 700, fontFamily: "'Inter', sans-serif",
+    cursor: "pointer", boxShadow: "0 4px 14px rgba(29,78,216,0.25)",
   },
 };
 

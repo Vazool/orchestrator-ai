@@ -1,410 +1,437 @@
 import joblib
 import pandas as pd
 import random
-
+import asyncio
+import os
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from datetime import datetime
-
-import json
-
-# Your custom connection logic
-from database import engine, SessionLocal, get_db
-
-# GDPR Privacy Vault
-from privacy_engine import demo_vault
-
-import os
 from openai import OpenAI
 
-# --- Global Policy Configuration ---
+# Custom imports
+from database import engine, SessionLocal, get_db
+from privacy_engine import demo_vault
+
+# --- 1. BELGIAN POLICY TIERS (Updated) ---
+
 POLICY_FEATURES = {
-    0: {  # Basic
-        "label": "Basic",
-        "medical": "up to £2m",
-        "repatriation": "Standard",
-        "cancellation": "specified causes only",
-        "concierge": "None",
-        "disruption": "None"
+    0: { 
+        "label": "Tempo Digital", 
+        "medical": "up to € 250K", 
+        "repatriation": "In case of injury or illness", 
+        "NoGo cancellation": "€500 per trip", 
+        "Comms method": "Digital only", 
+        "concierge": "None", 
+        "disruption": "None" 
     },
-    1: {  # Standard
-        "label": "Standard",
-        "medical": "up to £5m",
-        "repatriation": "Standard",
-        "cancellation": "extended causes",
-        "concierge": "24/7 helpline",
-        "disruption": "None"
+    1: { 
+        "label": "Tempo", 
+        "medical": "up to € 250K", 
+        "repatriation": "In case of injury or illness", 
+        "NoGo cancellation": "€500 per trip", 
+        "Comms method": "Digital + telephone", 
+        "concierge": "24/7 Helpline", 
+        "disruption": "None" 
     },
-    2: {  # Platinum
-        "label": "Platinum",
-        "medical": "unlimited / £10m+",
-        "repatriation": "Priority + upgraded travel",
-        "cancellation": "incl. discretionary cancel for work issues",
-        "concierge": "dedicated case handler",
-        "disruption": "proactive disruption alerts + auto-claims"
+    2: { 
+        "label": "Long Trip Temporary Travel Insurance", 
+        "medical": "€1.25M", 
+        "repatriation": "In case of injury or illness", 
+        "NoGo cancellation": "€10K per trip", 
+        "Comms method": "Digital + telephone", 
+        "concierge": "24/7 helpline", 
+        "disruption": "proactive disruption alerts + auto-claims" 
     }
 }
 
-# Initialize the OpenAI Client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# See .env for the production toggle ("True" or "False")
-IS_PROD = os.getenv("PRODUCTION_MODE", "False").lower() == "true"
-
-def generate_ai_message(ctx: dict) -> str:
-    """Uses GPT-4o-mini to write messages using tokens instead of real names."""
-    
-    # --- STAGE 1: MASKING (Brussels Protocol) ---
-    # We swap the real name for a token like {{forename_1}}
-    real_forename = ctx.get('forename', 'Traveler')
-    masked_forename = demo_vault.mask_customer_data(real_forename)
-
-    # 1. New Risk-Level Instruction
-    risk_val = ctx.get('risk_score', 0)
-    if risk_val >= 70:
-        urgency_instruction = "This is a HIGH RISK situation. Use a proactive, protective, and urgent tone."
-    elif risk_val >= 40:
-        urgency_instruction = "This is a MODERATE RISK situation. Use a helpful, advisory, and vigilant tone."
-    else:
-        urgency_instruction = "Standard advisory tone."
-
-    # 2. Dynamic Policy Fact Injection
-    policy_facts = (
-        f"The customer has {ctx['policy_label']} coverage. "
-        f"Key benefits to mention if relevant: Medical cover {ctx['medical_limit']}, "
-        f"Repatriation: {ctx['repatriation']}, Cancellation: {ctx['cancel_terms']}. "
-        f"Concierge Access: {ctx['concierge_perk']}."
-    )
-
-    # 3. Platinum "Option Identification" Logic (The 'Brussels Scout' approach)
-    platinum_instruction = ""
-    if ctx.get('policy_type') == 2:
-        platinum_instruction = (
-            f"As a PLATINUM member, mention their 'Proactive Disruption Benefit' ({ctx['disruption_benefit']}). "
-            f"Crucially, inform them that our team has already IDENTIFIED a potential alternative flight: "
-            f"{ctx.get('flight_number')} departing from {ctx.get('dep_airport')} at {ctx.get('alt_time')}. "
-            f"Clarify that this is an available option we have found for them, and they should "
-            f"contact their dedicated case handler to discuss or finalize arrangements if they wish to proceed."
-        )
-    
-    # 4. Birthday Logic
-    birthday_instruction = (
-        "This is a BIRTHDAY TRIP. Mention the celebration warmly and "
-        "reassure them that we are here to protect their special plans." 
-        if ctx.get('is_birthday_trip') else ""
-    )
-
-    # 5. Language Extraction
-    target_lang = ctx.get('language', 'English')
-
-    # UPDATED PROMPT: Notice we use masked_forename and a new Constraint
-    prompt = f"""
-    You are a luxury travel concierge for Europ Assistance. 
-    Write a supportive alert in {target_lang} for:
-    - Customer: {masked_forename}
-    - Location: {ctx['destination']}
-    - Event: {ctx['event_type']} (Severity {ctx['severity']}/5)
-    - Calculated Disruption Risk: {risk_val}%
-    
-    Policy Context: {policy_facts}
-    
-    Tone Guidance: {urgency_instruction}
-    {platinum_instruction}
-    {birthday_instruction}
-
-    Constraints: 
-    1. Keep the message under 4 sentences. 
-    2. Use the exact tag {masked_forename} to address the customer. 
-    3. Do NOT invent a name or use generic greetings like 'Dear Customer'.
-    4. Incorporate 1-2 specific policy facts.
-    5. Output MUST be in {target_lang}.
-    """
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"You are an empathetic support agent. Use the provided {{tags}} for names exactly as they appear."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        
-        # --- STAGE 2: REHYDRATION ---
-        # The AI returns text containing "{{forename_1}}"
-        raw_content = response.choices[0].message.content.strip()
-        
-        # We swap it back to the real name locally
-        final_message = demo_vault.rehydrate_message(raw_content)
-        
-        return final_message
-
-    except Exception as e:
-        print(f"AI Error: {e}")
-        # Local fallback also uses the real name safely
-        return f"Safety Alert: {ctx['event_type']} detected near {ctx['destination']}. {real_forename}, please contact your {ctx['policy_label']} support line."
-
 app = FastAPI()
 
-# ─── DB MIGRATION NOTE ────────────────────────────────────────────────────────
-# Run these once against your database before starting the server:
-#
-#   ALTER TABLE actions ADD COLUMN is_read TINYINT(1) NOT NULL DEFAULT 0;
-#
-#   CREATE TABLE IF NOT EXISTS alert_feedback (
-#       feedback_id  INT AUTO_INCREMENT PRIMARY KEY,
-#       action_id    INT NOT NULL,
-#       mood         ENUM('happy','neutral','sad') NOT NULL,
-#       created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-#       UNIQUE KEY uq_action (action_id),
-#       FOREIGN KEY (action_id) REFERENCES actions(action_id) ON DELETE CASCADE
-#   );
-# ─────────────────────────────────────────────────────────────────────────────
+# LOCATION HIERARCHY
 
-# Ensure risk_model.pkl is in the same directory as main.py
+def load_location_lookup(db):
+    # Ensure lowercase 'locations'
+    rows = db.execute(text("SELECT location_id, parent_location_id, code FROM locations")).fetchall()
+    
+    lookup = {}
+    code_map = {}
+    
+    for r in rows:
+        l_id = int(r.location_id)
+        # Handle the 'NULL' string vs actual None
+        raw_parent = r.parent_location_id
+        if raw_parent is None or str(raw_parent).strip().upper() == 'NULL':
+            parent = None
+        else:
+            parent = int(raw_parent)
+            
+        lookup[l_id] = parent
+        code_map[str(r.code).strip().upper()] = l_id
+
+    # LOUD DEBUG: If these numbers are 0, your table is empty or the query failed
+    print(f"--- 📍 LOCATION MAP LOADED: {len(code_map)} codes, {len(lookup)} relationships ---", flush=True)
+    return lookup, code_map
+
+def is_location_match(event_loc_id, traveler_loc_code, lookup, code_map):
+    if not event_loc_id or not traveler_loc_code:
+        return False
+
+    target_id = int(event_loc_id)
+    start_code = str(traveler_loc_code).strip().upper()
+    current_id = code_map.get(start_code)
+
+    if current_id is None:
+        # If this prints, your 'travel' table has airport codes not in your 'locations' table
+        print(f"❌ ERROR: Airport code '{start_code}' not found in Location Maps!", flush=True)
+        return False
+
+    visited = set()
+    while current_id is not None:
+        if int(current_id) == target_id:
+            return True
+        if current_id in visited: break
+        visited.add(current_id)
+        current_id = lookup.get(int(current_id))
+    
+    return False
+
+# Enable CORS for the Frontend
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Load the "Brain" (ML Model)
+
 try:
     risk_model = joblib.load("risk_model.pkl")
     print("Chef: ML Risk Model loaded successfully.")
 except Exception as e:
     print(f"Chef: Warning! Could not load ML model: {e}")
 
-# Enable CORS for CJ's React App
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=True,  # Add this if you use cookies or auth
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# --- 2. AI MESSAGE ENGINE (With Brussels Protocol) ---
+
+def generate_ai_message(ctx: dict) -> str:
+    real_forename = ctx.get('forename', 'Traveler')
+    masked_forename = demo_vault.mask_customer_data(real_forename)
+    
+    risk_val = ctx.get('risk_score', 0)
+    urgency = "HIGH RISK" if risk_val >= 70 else "MODERATE"
+
+    # --- 1. STRICT TIER-BASED LOGIC ---
+    # We initialize as empty so Tiers 0 and 1 get NOTHING regarding flights.
+    scout_instruction = ""
+    
+    if int(ctx.get('policy_type', 0)) == 2:
+        # This block ONLY runs for 'Long Trip Temporary'
+        scout_instruction = (
+            f"SPECIAL SERVICE UPGRADE: This customer has 'Long Trip Temporary' coverage. "
+            f"You MUST include this exact flight scout detail: 'Our scouts have identified a potential "
+            f"alternative flight {ctx.get('flight_number', 'EA1234')} at {ctx.get('alt_time', '20:45')}. "
+            f"Please contact your dedicated handler to discuss this option.'"
+        )
+    else:
+        # Explicitly tell the AI NOT to mention flights for Tiers 0 and 1
+        scout_instruction = "Do NOT mention alternative flights or proactive scouting."
+
+    # --- 2. THE RIGID PROMPT ---
+    prompt = f"""
+    Role: Europ Assistance Belgium Concierge.
+    User: {masked_forename}. 
+    Product: {ctx.get('policy_label')} (Cover: {ctx.get('medical_limit')}, Cancellation: {ctx.get('cancel_terms')}).
+    Event: {ctx.get('event_type')} in {ctx.get('destination')}. Risk: {risk_val}%.
+
+    {scout_instruction}
+
+    Task: Write a {urgency} alert in {ctx.get('language', 'English')}.
+    Constraints: 
+    - Max 3 sentences for Standard/Tempo. 
+    - Max 4 sentences for Long Trip Temporary.
+    - Use {masked_forename} exactly.
+    - Never imply re-booking costs are covered.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a precise insurance assistant. Follow the 'SPECIAL SERVICE UPGRADE' or 'Do NOT' instructions perfectly."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5 # Dropped temperature for more predictable/less 'creative' results
+        )
+        
+        return demo_vault.rehydrate_message(response.choices[0].message.content.strip())
+        
+    except Exception as e:
+        return f"Safety Alert: {ctx['event_type']} near {ctx['destination']}. {real_forename}, please check your app."
+
+# --- 3. THE PARALLEL WORKER (The "Sous Chef") ---
+async def process_traveler_notification(traveler, payload, event_id, location_lookup, code_to_location):
+    async_db = SessionLocal()
+    try:
+        # 1. Convert "NCE" to the numeric ID
+        payload_code = payload.get("location_code")
+        payload_location_id = code_to_location.get(payload_code)
+
+        if payload_location_id is None:
+            return "location_not_found"
+
+        # 2. Check if the traveler's airport matches the event location (or its parents)
+        # This one check handles the geographical logic
+        affected = is_location_match(
+            payload_location_id,
+            traveler.arrival_airport,
+            location_lookup,
+            code_to_location
+        )
+
+        if not affected:
+            # Important: Record a 'no_action' decision so the Sankey stays accurate
+            async_db.execute(text("""
+                INSERT INTO decisions (event_id, travel_id, decision_type, reason_code) 
+                VALUES (:eid, :tid, 'no_action', 'not_impacted')
+            """), {"eid": event_id, "tid": traveler.travel_id})
+            await async_db.commit()
+            return "not_impacted"
+
+        # --- STAGE 0. STANDARDIZE POLICY TYPE ---
+        p_type = int(traveler.policy_type) if traveler.policy_type is not None else 0
+        policy_info = POLICY_FEATURES.get(p_type, POLICY_FEATURES[0])
+
+        # --- STAGE 1: PRIVACY CHECK ---
+        
+        if int(traveler.optin or 0) == 0:
+            async_db.execute(text("INSERT INTO decisions (event_id, travel_id, decision_type, reason_code) VALUES (:eid, :tid, 'no_action', 'no_consent')"), {"eid": event_id, "tid": traveler.travel_id})
+            async_db.commit()
+            return "no_consent"
+
+        # --- STAGE 2: DEDUPLICATION ---
+        
+        dedup_sql = text("""
+            SELECT COUNT(*) FROM decisions d
+            JOIN events e ON d.event_id = e.event_id
+            WHERE d.travel_id = :tid 
+                AND e.location_code = :loc 
+                AND d.decision_type != 'no_action'
+                AND e.event_date >= DATE_SUB(:ed, INTERVAL 7 DAY)
+                AND d.event_id != :current_eid
+        """)
+        
+        is_dup = async_db.execute(dedup_sql, {
+            "tid": traveler.travel_id, "loc": payload['location_code'], 
+            "ed": payload['event_date'], "current_eid": event_id
+        }).scalar()
+
+        if is_dup > 0:
+            async_db.execute(text("INSERT INTO decisions (event_id, travel_id, decision_type, reason_code) VALUES (:eid, :tid, 'no_action', 'already_contacted')"), 
+                             {"eid": event_id, "tid": traveler.travel_id})
+            async_db.commit()
+            return "already_contacted"
+
+        # --- STAGE 3: ML RISK SCORING ---
+        
+        t_map = traveler._mapping
+        e_date = datetime.strptime(payload['event_date'], "%Y-%m-%d").date()
+        days_diff = max((t_map['start_date'] - e_date).days, 0)
+        
+        model_input = pd.DataFrame([{
+            "severity": payload["severity_level"], "event_type": payload["event_type"],
+            "location_type": payload["location_type"], "days_before_travel": days_diff,
+            "policy_type": p_type, "travel_purpose": 0 
+        }])
+
+        risk_prob = risk_model.predict_proba(model_input)[:, 1][0]
+        
+        if risk_prob >= 0.7: decision, reason = "notify", "ai_high_risk"
+        elif risk_prob >= 0.4: decision, reason = "notify_safety_only", "ai_moderate_risk"
+        else: decision, reason = "no_action", "ai_low_risk"
+
+        # --- STAGE 4: AI GENERATION (With Scout Logic) ---
+        
+        msg = None
+        if decision != "no_action":
+            if p_type == 2:
+                print(f"💎 SCOUT ACTIVATED for {traveler.forename}")
+
+            ctx = {
+                "forename": traveler.forename, 
+                "destination": traveler.final_destination,
+                "event_type": payload['event_type'], 
+                "severity": payload['severity_level'],
+                "risk_score": round(risk_prob * 100), 
+                "language": traveler.preferred_language,
+                "policy_label": policy_info["label"], 
+                "medical_limit": policy_info["medical"],
+                "cancel_terms": policy_info["NoGo cancellation"], 
+                "policy_type": p_type,
+                "disruption": policy_info.get("disruption"),
+                "flight_number": "EA" + str(random.randint(1000, 9999)),
+                "dep_airport": traveler.arrival_airport or "NCE",
+                "alt_time": "20:45"
+            }
+            msg = await asyncio.to_thread(generate_ai_message, ctx)
+
+        # --- STAGE 5: RECORDING ---
+        
+        res = async_db.execute(text("INSERT INTO decisions (event_id, travel_id, decision_type, reason_code) VALUES (:eid, :tid, :dt, :rc)"),
+                               {"eid": event_id, "tid": traveler.travel_id, "dt": decision, "rc": reason})
+        if msg:
+            async_db.execute(text("INSERT INTO actions (decision_id, channel_type, action_status, message) VALUES (:did, 'email', 'queued', :msg)"),
+                             {"did": res.lastrowid, "msg": msg})
+        
+        async_db.commit()
+        return reason
+    except Exception as e:
+        print(f"Worker Error: {e}")
+        return "error"
+    finally:
+        async_db.close()
+
+
+# --- 4. THE MAIN ROUTES ---
 
 @app.post("/simulate-event")
-def simulate_event(payload: dict, db: Session = Depends(get_db)):
-    # 1. Record the Event
+async def simulate_event(data: dict, db: Session = Depends(get_db)):
+    location_lookup, code_to_location = load_location_lookup(db)
+    
+    # 1. Date formatting logic
+    raw_date = data.get('event_date')
+    if '/' in raw_date:
+        day, month, year = raw_date.split('/')
+        event_date = f"{year}-{month}-{day}"
+    else:
+        event_date = raw_date
+    
+    # 2. Record the Event in the DB
     event_sql = text("""
         INSERT INTO events (event_type, location_type, location_code, event_date, severity_level, source)
         VALUES (:et, :lt, :lc, :ed, :sl, :src)
     """)
-    result = db.execute(event_sql, {
-        "et": payload['event_type'], "lt": payload['location_type'],
-        "lc": payload['location_code'], "ed": payload['event_date'],
-        "sl": payload['severity_level'], "src": payload['source']
+    
+    res = db.execute(event_sql, {
+        "et": data.get('event_type'),
+        "lt": data.get('location_type'),
+        "lc": data.get('location_code'),
+        "ed": event_date,
+        "sl": data.get('severity_level'),
+        "src": data.get('source', 'simulator')
     })
-    event_id = result.lastrowid
+    event_id = res.lastrowid
+    db.commit()
 
-    # Initialize narrative counters
-    TOTAL_PORTFOLIO = 1000
+    # --- 3. IMPACT ZONE EXPANSION (NEW BRUSSELS LOGIC) ---
+    target_code = data.get('location_code', 'FR').strip().upper()
+    target_id = code_to_location.get(target_code)
+    
+    # Find every child ID that belongs to this code (Recursive Climb)
+    affected_ids = {target_id} if target_id else set()
+    expanded = True
+    while expanded:
+        expanded = False
+        for child_id, parent_id in location_lookup.items():
+            if parent_id in affected_ids and child_id not in affected_ids:
+                affected_ids.add(child_id)
+                expanded = True
+    
+    # Map IDs back to Codes (e.g., ID 1 -> ['FR', 'NCE', 'PAR', 'MRS'...])
+    id_to_code = {v: k for k, v in code_to_location.items()}
+    affected_codes = [id_to_code[i] for i in affected_ids if i in id_to_code]
+    
+    if not affected_codes:
+        affected_codes = [target_code]
+
+    print(f"--- 📡 BROADCASTING TO: {affected_codes} ---", flush=True)
+
+    # --- 4. FIND IMPACTED TRAVELERS (USING THE EXPANDED LIST) ---
+    # We change '= UPPER(:lc)' to 'IN :codes'
+    impacted = db.execute(text("""
+        SELECT t.travel_id, t.customer_id, t.final_destination, t.start_date, t.end_date,
+               t.arrival_airport, 
+               c.forename, c.optin, c.preferred_language, pc.policy_type
+        FROM travel t 
+        JOIN customers c ON t.customer_id = c.customer_id 
+        JOIN policies pc ON c.customer_id = pc.customer_id
+        WHERE :ed BETWEEN t.start_date AND t.end_date 
+        AND (UPPER(t.arrival_airport) IN :codes OR UPPER(t.destination_region) IN :codes)
+    """), {
+        "ed": event_date, 
+        "codes": tuple(affected_codes) # Pass the list as a tuple for SQL IN clause
+    }).fetchall()
+
+    # Parallel processing
+    
+    sem = asyncio.Semaphore(10)
+    async def task(t):
+        async with sem:
+            return await process_traveler_notification(
+                t,
+                data,
+                event_id,
+                location_lookup,
+                code_to_location
+            )
+
+    results = await asyncio.gather(*[task(t) for t in impacted])
+
+    # 1. Initialize the counters
+    
     counts = {
         "eligible": 0, 
         "goodwill": 0, 
         "no_consent": 0, 
         "already_contacted": 0,
-        "no_action":0
+        "no_action": 0
     }
 
-    IS_PROD = False
-
-    # 2. Updated Matching Logic (Now with Birthday Overlap Detection)
-    matching_sql = text("""
-        WITH RECURSIVE LocationHierarchy AS (
-            SELECT location_id, code FROM locations WHERE code = :loc
-            UNION ALL
-            SELECT l.location_id, l.code
-            FROM locations l
-            INNER JOIN LocationHierarchy lh ON l.parent_location_id = lh.location_id
-        )
-        SELECT 
-            t.travel_id, 
-            t.customer_id, 
-            t.final_destination,
-            t.start_date,          -- ADDED: Required for ML 'days_before_travel'
-            t.end_date,            -- ADDED: Good practice for debugging
-            c.forename, 
-            c.optin, 
-            c.preferred_language, 
-            t.travel_purpose,      -- ADDED: Required for ML feature
-            pc.policy_type,
-            CASE 
-                WHEN DATE_FORMAT(c.dob, '%m-%d') BETWEEN DATE_FORMAT(t.start_date, '%m-%d') AND DATE_FORMAT(t.end_date, '%m-%d')
-                THEN 1 ELSE 0 
-            END as is_birthday_trip
-        FROM travel t
-        JOIN customers c ON t.customer_id = c.customer_id
-        JOIN policies pc ON c.customer_id = pc.customer_id 
-        WHERE :event_date BETWEEN t.start_date AND t.end_date
-        AND (
-            t.arrival_airport IN (SELECT code FROM LocationHierarchy) OR 
-            t.destination_region IN (SELECT code FROM LocationHierarchy)
-        )
-    """)
+    # 2. Map the worker reason_codes back to the UI categories
     
-    impacted = db.execute(matching_sql, {
-        "event_date": payload['event_date'],
-        "loc": payload['location_code']
-    }).fetchall()
+    reason_to_category = {
+        "ai_high_risk": "eligible",
+        "ai_moderate_risk": "goodwill",
+        "no_consent": "no_consent",
+        "already_contacted": "already_contacted",
+        "ai_low_risk": "no_action"
+    }
 
-    # DEBUG: Let's see exactly what the Sous Chef brought out of the pantry
-    if impacted:
-        print(f"DEBUG: Columns returned from DB: {impacted[0]._mapping.keys()}")
+    # 3. Fill the counters based on the 'results' list from the workers
+    
+    for reason in results:
+        category = reason_to_category.get(reason)
+        if category in counts:
+            counts[category] += 1
 
-    actual_impacted_count = len(impacted)  # Capture the true count before any safety slicing
+    
+    # 4. Calculate the summary for the UI
+    
+    total_portfolio = 1000
+    evaluated = len(impacted)
+    notified = counts.get("eligible", 0) + counts.get("goodwill", 0)
+    not_impacted = total_portfolio - evaluated
 
-    ai_call_count = 0  # We'll use this to track real API calls
-
-    # 3. Decision Engine Logic - Now looping through EVERYTHING
-    for index, traveler in enumerate(impacted):
-        
-        print(f"CRITICAL DEBUG: Traveler {index} | Count is {ai_call_count} | Condition: {ai_call_count < 10}")
-
-        # GATE 1: PRIVACY (Consent Check)
-        # Using != 1 catches 0, None, or False
-        is_opted_in = int(traveler.optin) if traveler.optin is not None else 0
-
-        if is_opted_in == 0:
-            decision, reason = "no_action", "no_consent"
-            counts["no_consent"] += 1
-            msg = None
-            print(f">>> PRIVACY BLOCK: {traveler.forename} (Value: {traveler.optin})")
-
-        else:
-            # GATE 2: DEDUPLICATION (State-Awareness Check) - removed AND e.event_type = :et
-            
-            dedup_sql = text("""
-                SELECT COUNT(*) FROM decisions d
-                JOIN events e ON d.event_id = e.event_id
-                WHERE d.travel_id = :tid 
-                    AND e.location_code = :loc 
-                    AND d.decision_type != 'no_action'
-                    AND e.event_date >= DATE_SUB(:ed, INTERVAL 7 DAY)
-                    AND d.event_id != :current_eid
-                """)
-          
-            is_dup = db.execute(dedup_sql, {
-                "tid": traveler.travel_id, 
-                "loc": payload['location_code'], 
-                "ed": payload['event_date'],
-                "current_eid": event_id
-            }).scalar()
-
-            if is_dup > 0:
-                decision, reason = "no_action", "already_contacted"
-                counts["already_contacted"] += 1
-                msg = None
-            else: 
-                # --- 1. ML DATA PREP ---
-                # Accessing via _mapping ensures we don't get the AttributeError again
-                t_data = traveler._mapping 
-                
-                event_date_obj = datetime.strptime(payload['event_date'], "%Y-%m-%d").date()
-                
-                # Use the mapping to get the date safely
-                traveler_start = t_data['start_date']
-                if isinstance(traveler_start, str):
-                    traveler_start = datetime.strptime(traveler_start, "%Y-%m-%d").date()
-                
-                days_before_travel = max((traveler_start - event_date_obj).days, 0)
-                
-                # --- 1. ML DATA PREP ---
-                t_data = traveler._mapping 
-
-                # Get the integer directly from the DB (0, 1, or 2)
-                # We default to 0 (Standard) if for some reason it's None
-                policy_feature = traveler.policy_type if traveler.policy_type is not None else 0
-                
-                purpose_map = {"leisure": 0, "business": 1}
-                travel_purpose_raw = getattr(traveler, 'travel_purpose', 'leisure')
-                purpose_feature = purpose_map.get(travel_purpose_raw.lower(), 0)
-
-                model_input = pd.DataFrame([{
-                    "severity": payload["severity_level"],
-                    "event_type": payload["event_type"],
-                    "location_type": payload["location_type"],
-                    "days_before_travel": days_before_travel,
-                    "policy_type": policy_feature,
-                    "travel_purpose": purpose_feature
-                }])
-
-                # --- 2. ML PREDICTION ---
-                # Get the score from the 'brain'
-                risk_probability = risk_model.predict_proba(model_input)[:, 1][0]
-                
-                # --- 3. GATE 3: DECISION BASED ON ML SCORE ---
-                if risk_probability >= 0.7:
-                    decision, reason = "notify", "ai_high_risk"
-                    counts["eligible"] += 1
-                elif risk_probability >= 0.4:
-                    decision, reason = "notify_safety_only", "ai_moderate_risk"
-                    counts["goodwill"] += 1
-                else:
-                    decision, reason = "no_action", "ai_low_risk"
-                    counts["no_action"] += 1
-
-                # --- 4. AI MESSAGE GENERATION ---
-                if decision != "no_action":
-                    alt_flight_time = f"{random.randint(11, 21)}:{random.choice(['00', '15', '30', '45'])}"
-                    policy_info = POLICY_FEATURES.get(traveler.policy_type, POLICY_FEATURES[0])
-
-                    ai_context = {
-                        "forename": traveler.forename,
-                        "destination": traveler.final_destination,
-                        "event_type": payload['event_type'],
-                        "severity": payload['severity_level'],
-                        "policy_type": traveler.policy_type,
-                        "is_birthday_trip": bool(getattr(traveler, 'is_birthday_trip', False)),
-                        "language": traveler.preferred_language,
-                        "risk_score": round(risk_probability * 100),
-                        "flight_number": getattr(traveler, 'flight_number', 'EA1234'),
-                        "dep_airport": getattr(traveler, 'departure_airport', 'LHR'),
-                        "alt_time": alt_flight_time,
-                        # --- NEW POLICY FACT INJECTION ---
-                        "policy_label": policy_info["label"],
-                        "medical_limit": policy_info["medical"],
-                        "repatriation": policy_info["repatriation"],
-                        "cancel_terms": policy_info["cancellation"],
-                        "concierge_perk": policy_info["concierge"],
-                        "disruption_benefit": policy_info["disruption"]
-                    }
-                    msg = generate_ai_message(ai_context)
-                else:
-                    msg = None
-
-        # --- 5. DATABASE RECORDING (End of the loop) ---
-        # This records EVERY decision (Notify OR No Action)
-        dec_res = db.execute(text("""
-            INSERT INTO decisions (event_id, travel_id, decision_type, reason_code)
-            VALUES (:eid, :tid, :dt, :rc)
-        """), {"eid": event_id, "tid": traveler.travel_id, "dt": decision, "rc": reason})
-        
-        # This only creates an action if the AI actually wrote a message
-        if msg:
-            db.execute(text("""
-                INSERT INTO actions (decision_id, channel_type, action_status, message)
-                VALUES (:did, 'email', 'queued', :msg)
-            """), {"did": dec_res.lastrowid, "msg": msg})
-
-    db.commit()
-
-    # THE RECONCILIATION SUMMARY
-    print(f"--- RESULTS FOR {payload['location_code']} ---")
-    print(f"Total Found: {len(impacted)}")
-    print(f"Privacy Blocks: {counts['no_consent']}")
-    print(f"Deduplicated: {counts['already_contacted']}")
-    print(f"AI Calls Made: {counts['eligible'] + counts['goodwill']}")
-
+    # THE RECONCILIATION SUMMARY (Brussels Terminal View)
+    
+    print(f"\n--- 🛡️ BRUSSELS PROTOCOL: RESULTS FOR {data.get('location_code')} ---")
+    print(f"Total Found in Database: {len(impacted)}")
+    print(f"Privacy Blocks (Opt-out): {counts.get('no_consent', 0)}")
+    print(f"Deduplicated (Already sent): {counts.get('already_contacted', 0)}")
+    print(f"AI Notifications Queued: {counts.get('eligible', 0) + counts.get('goodwill', 0)}")
+    print(f"Low Risk (No Action): {counts.get('no_action', 0)}")
+    print("---------------------------------------------------\n")
+    
     return {
         "event_id": event_id,
-        "total_records": TOTAL_PORTFOLIO,              
-        "customers_evaluated": actual_impacted_count,
-        "notifications_created": counts["eligible"] + counts["goodwill"],
-        "customers_not_impacted": TOTAL_PORTFOLIO - actual_impacted_count,          
-
+        "total_records": total_portfolio,              
+        "customers_evaluated": evaluated,
+        "notifications_created": notified,
+        "customers_not_impacted": not_impacted,          
         "detailed_breakdown": [
             {"category": "AI Prediction: High Risk", "count": counts.get("eligible", 0)},
             {"category": "AI Prediction: Moderate Risk", "count": counts.get("goodwill", 0)},
@@ -414,141 +441,50 @@ def simulate_event(payload: dict, db: Session = Depends(get_db)):
         ]
     }
 
+# --- UI ENDPOINTS ---
+
 @app.get("/alerts")
 def get_alerts(db: Session = Depends(get_db)):
-    """
-    Returns latest notifications for the customer NotificationsScreen.
-    Joins through decisions → travels to surface travel_purpose and isRead status.
-    """
-    
     query = text("""
-        SELECT
-            a.action_id           AS id,
-            a.message,
-            a.created_at          AS time,
-            a.is_read             AS isRead,
-            COALESCE(t.travel_purpose, 'leisure') AS travel_purpose,
-            COALESCE(pc.policy_type, 0)            AS policy_type
-        FROM actions a
-        LEFT JOIN decisions d ON a.decision_id = d.decision_id
-        LEFT JOIN travel    t ON d.travel_id   = t.travel_id
-        -- Added this bridge to reach the policies table
-        LEFT JOIN policies pc ON t.customer_id = pc.customer_id 
-        ORDER BY a.created_at DESC
-        LIMIT 50
+        SELECT a.action_id AS id, a.message, a.created_at AS time, a.is_read AS isRead, t.customer_id
+        FROM actions a JOIN decisions d ON a.decision_id = d.decision_id JOIN travel t ON d.travel_id = t.travel_id
+        ORDER BY a.created_at DESC LIMIT 50
     """)
-    
-    results = db.execute(query).fetchall()
-    rows = []
-    for r in results:
-        row = dict(r._mapping)
-        # Normalise is_read → Python bool (MySQL may return 0/1)
-        row["isRead"] = bool(row.get("isRead", 0))
-        rows.append(row)
-    return rows
+    return [dict(r._mapping, isRead=bool(r._mapping.get('isRead', 0))) for r in db.execute(query)]
 
 @app.patch("/alerts/{alert_id}/read")
-def mark_alert_read(alert_id: int, db: Session = Depends(get_db)):
-    """Mark a single notification as read when the customer clicks it."""
-    result = db.execute(
-        text("UPDATE actions SET is_read = 1 WHERE action_id = :id"),
-        {"id": alert_id}
-    )
+def mark_read(alert_id: int, db: Session = Depends(get_db)):
+    db.execute(text("UPDATE actions SET is_read = 1 WHERE action_id = :id"), {"id": alert_id})
     db.commit()
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return {"ok": True, "alert_id": alert_id}
+    return {"ok": True}
 
+@app.patch("/customers/{customer_id}/opt-out")
+def opt_out(customer_id: int, db: Session = Depends(get_db)):
+    db.execute(text("UPDATE customers SET optin = 0 WHERE customer_id = :id"), {"id": customer_id})
+    db.commit()
+    return {"ok": True}
 
 @app.post("/alerts/feedback")
-def save_alert_feedback(payload: dict, db: Session = Depends(get_db)):
-    """
-    Persist the emoji feedback the customer gave for a notification.
-    Expects: { "alert_id": int, "mood": "happy" | "neutral" | "sad" }
-    """
-    valid_moods = {"happy", "neutral", "sad"}
-    mood = payload.get("mood", "").lower()
-    if mood not in valid_moods:
-        raise HTTPException(status_code=422, detail=f"mood must be one of {valid_moods}")
-
-    db.execute(
-        text("""
-            INSERT INTO alert_feedback (action_id, mood, created_at)
-            VALUES (:action_id, :mood, NOW())
-            ON DUPLICATE KEY UPDATE mood = :mood, created_at = NOW()
-        """),
-        {"action_id": payload["alert_id"], "mood": mood}
-    )
-    db.commit()
-    return {"ok": True, "alert_id": payload["alert_id"], "mood": mood}
-
-
-@app.get("/dashboard")
-def get_dashboard(event_id: int, db: Session = Depends(get_db)):
-    query = text("""
-        SELECT reason_code, COUNT(*) as count
-        FROM decisions WHERE event_id = :eid
-        GROUP BY reason_code
-    """)
-    results = db.execute(query, {"eid": event_id}).fetchall()
+def submit_feedback(payload: dict, db: Session = Depends(get_db)):
+    # Extract data from the body since it's not in the URL
+    alert_id = payload.get('action_id') or payload.get('alert_id')
+    mood = payload.get('mood')
     
-    # Create the dictionary from DB results
-    breakdown = {r.reason_code: r.count for r in results}
-    
-    return {
-        "event_id": event_id,
-        "detailed_breakdown": [
-            {"category": "AI Prediction: High Risk", "count": breakdown.get('ai_high_risk', 0)},
-            {"category": "AI Prediction: Moderate Risk", "count": breakdown.get('ai_moderate_risk', 0)},
-            {"category": "No Consent (Privacy Block)", "count": breakdown.get('no_consent', 0)},
-            {"category": "Already Contacted (Deduplicated)", "count": breakdown.get('already_contacted', 0)},
-            {"category": "No Coverage (AI Low Risk)", "count": breakdown.get('ai_low_risk', 0)}
-        ]
-    }
+    print(f"DEBUG: Feedback hit! Alert: {alert_id}, Mood: {mood}")
 
-# ========================
-#  TEST BLOCK 
-# ========================
+    if not alert_id or not mood:
+        raise HTTPException(status_code=400, detail="Missing alert_id or mood")
 
-@app.get("/test-chef")
-def test_chef():
-    return {
-        "model_loaded": risk_model is not None,
-        "model_type": str(type(risk_model))
-    }
-
-if __name__ == "__main__":
-    # The context block you already created
-    test_ctx = {
-        "forename": "Boudewijn",
-        "destination": "Nice (NCE)",
-        "event_type": "Flight Delay",
-        "severity": 4,
-        "risk_score": 85,
-        "policy_type": 2, 
-        "policy_label": "Platinum Plus",
-        "medical_limit": "Unlimited",
-        "repatriation": "Included (Private Jet)",
-        "cancel_terms": "Full Refund",
-        "concierge_perk": "24/7 Priority Handler",
-        "disruption_benefit": "Alternative Flight Search",
-        "flight_number": "SN3587",
-        "dep_airport": "BRU",
-        "alt_time": "14:30",
-        "is_birthday_trip": True,
-        "language": "Flemish"
-    }
-
-    print("\n--- 🛡️ BRUSSELS PROTOCOL: PRIVACY SHIELD TEST ---")
-    
-    # Execute the function
-    final_output = generate_ai_message(test_ctx)
-    
-    print("\nFINAL REHYDRATED MESSAGE:")
-    print(f"[{final_output}]")
-    
-    # Paranoia Check: Verify the name 'Boudewijn' is actually back in the string
-    if "Boudewijn" in final_output:
-        print("\n✅ VERIFICATION SUCCESS: PII successfully rehydrated locally.")
-    else:
-        print("\n❌ VERIFICATION FAILED: Token was not replaced.")
+    try:
+        query = text("""
+            INSERT INTO alert_feedback (action_id, mood) 
+            VALUES (:aid, :mood)
+            ON DUPLICATE KEY UPDATE mood = :mood
+        """)
+        db.execute(query, {"aid": alert_id, "mood": mood})
+        db.commit()
+        return {"ok": True}
+    except Exception as e:
+        db.rollback()
+        print(f"SQL Error in feedback: {e}")
+        raise HTTPException(status_code=500, detail="Database error")

@@ -327,6 +327,41 @@ export default function OperatorScreen() {
   };
 
   const simulateEvent = async () => {
+  setError(null);
+  setLoading(true);
+  setDashboard(null);
+  setSimulateResult(null);
+
+  const payload = {
+    event_type: eventType,
+    source: "simulator",
+    event_date: eventDate,
+    location_type: locationType,
+    location_code: locationCode,
+    severity_level: Number(severityLevel),
+    payload: { headline: "Simulated event (v0)" }
+  };
+
+  try {
+    const res = await fetch("http://localhost:5000/simulate-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) throw new Error("Simulation failed");
+
+    const simData = await res.json();
+    setSimulateResult(simData);
+
+  } catch (err) {
+    setError(err.message || "Failed to simulate event or fetch dashboard.");
+  } finally {
+    setLoading(false);
+  }
+};
+  
+  /*const simulateEvent = async () => {
     setError(null); setLoading(true); setDashboard(null); setSimulateResult(null);
     const payload = { event_type:eventType, source:"simulator", event_date:eventDate, location_type:locationType, location_code:locationCode, severity_level:Number(severityLevel), payload:{ headline:"Simulated event (v0)" } };
     try {
@@ -339,7 +374,7 @@ export default function OperatorScreen() {
       setDashboard(await dashRes.json());
     } catch { setError("Failed to simulate event or fetch dashboard."); }
     finally   { setLoading(false); }
-  };
+  };*/
 
   const sevColors = ["","#22c55e","#84cc16","#f59e0b","#f97316",C.red];
 
@@ -363,9 +398,9 @@ export default function OperatorScreen() {
   const stdCount      = Math.round(evaluated * 0.38);
   const platCount     = evaluated - basicCount - stdCount;
   const policyData = evaluated > 0 ? [
-    { category:"Basic",    count: basicCount },
-    { category:"Standard", count: stdCount   },
-    { category:"Platinum", count: platCount  },
+    { category:"Tempo Digital",    count: basicCount },
+    { category:"Tempo", count: stdCount   },
+    { category:"Long Trip Temporary", count: platCount  },
   ] : [];
   const policyColors = ["#94a3b8", C.blue, C.red];
 

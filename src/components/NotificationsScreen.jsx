@@ -123,6 +123,7 @@ function NotificationsScreen() {
               }}>
                 <NotificationItem
                   id={current?.id}
+                  customerId={current?.customer_id}
                   message={current?.message}
                   time={current?.time}
                   isRead={current?.isRead}
@@ -207,7 +208,7 @@ const styles = {
     alignItems: "flex-end",
     gap: "2rem",
     position: "relative",
-    zIndex: 1,
+    /* Removed zindex = 1 */
   },
   heroLeft: { flex: 1 },
   liveChip: {

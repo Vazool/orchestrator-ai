@@ -1,13 +1,13 @@
--- MySQL dump 10.13  Distrib 8.0.45, for Win64 (x86_64)
+-- MySQL dump 10.13  Distrib 8.0.45, for Linux (x86_64)
 --
--- Host: 127.0.0.1    Database: europ_assistance_db
+-- Host: localhost    Database: europ_assistance_db
 -- ------------------------------------------------------
 -- Server version	8.0.45
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
-/*!50503 SET NAMES utf8 */;
+/*!50503 SET NAMES utf8mb4 */;
 /*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
 /*!40103 SET TIME_ZONE='+00:00' */;
 /*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
@@ -35,7 +35,25 @@ CREATE TABLE `actions` (
   CONSTRAINT `actions_ibfk_1` FOREIGN KEY (`decision_id`) REFERENCES `decisions` (`decision_id`),
   CONSTRAINT `actions_chk_1` CHECK ((`channel_type` in (_utf8mb4'sms',_utf8mb4'email',_utf8mb4'push',_utf8mb4'whatsapp',_utf8mb4'in_app'))),
   CONSTRAINT `actions_chk_2` CHECK ((`action_status` in (_utf8mb4'queued',_utf8mb4'sent',_utf8mb4'failed')))
-) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `alert_feedback`
+--
+
+DROP TABLE IF EXISTS `alert_feedback`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `alert_feedback` (
+  `feedback_id` int NOT NULL AUTO_INCREMENT,
+  `action_id` int NOT NULL,
+  `mood` enum('happy','neutral','sad') NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`feedback_id`),
+  UNIQUE KEY `uq_action` (`action_id`),
+  CONSTRAINT `alert_feedback_ibfk_1` FOREIGN KEY (`action_id`) REFERENCES `actions` (`action_id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -83,7 +101,7 @@ CREATE TABLE `decisions` (
   CONSTRAINT `decisions_ibfk_2` FOREIGN KEY (`event_id`) REFERENCES `events` (`event_id`),
   CONSTRAINT `decisions_chk_1` CHECK ((`decision_type` in (_utf8mb4'no_action',_utf8mb4'notify',_utf8mb4'notify_safety_only'))),
   CONSTRAINT `decisions_chk_2` CHECK ((`reason_code` in (_utf8mb4'eligible',_utf8mb4'already_contacted',_utf8mb4'no_consent',_utf8mb4'goodwill_alert',_utf8mb4'ai_high_risk',_utf8mb4'ai_moderate_risk',_utf8mb4'ai_low_risk')))
-) ENGINE=InnoDB AUTO_INCREMENT=25 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=27 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -205,4 +223,4 @@ CREATE TABLE `travel` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-02-23 18:41:17
+-- Dump completed on 2026-04-19 10:25:11
