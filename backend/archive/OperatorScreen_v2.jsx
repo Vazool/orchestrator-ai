@@ -327,44 +327,39 @@ export default function OperatorScreen() {
   };
 
   const simulateEvent = async () => {
-    setError(null);
-    setLoading(true);
-    setDashboard(null);
-    setSimulateResult(null);
+  setError(null);
+  setLoading(true);
+  setDashboard(null);
+  setSimulateResult(null);
 
-    const payload = {
-      event_type: eventType,
-      source: "simulator",
-      event_date: eventDate,
-      location_type: locationType,
-      location_code: locationCode,
-      severity_level: Number(severityLevel),
-      payload: { headline: "Simulated event (v0)" }
-    };
-
-    try {
-      const res = await fetch("http://localhost:5000/simulate-event", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) throw new Error("Simulation failed");
-
-      const simData = await res.json();
-      setSimulateResult(simData);
-
-      // Fetch dashboard to populate Travel Purpose and Policy Tier charts
-      const dashRes = await fetch(`http://localhost:5000/dashboard?event_id=${simData.event_id}`);
-      if (!dashRes.ok) throw new Error("Dashboard fetch failed");
-      setDashboard(await dashRes.json());
-
-    } catch (err) {
-      setError(err.message || "Failed to simulate event or fetch dashboard.");
-    } finally {
-      setLoading(false);
-    }
+  const payload = {
+    event_type: eventType,
+    source: "simulator",
+    event_date: eventDate,
+    location_type: locationType,
+    location_code: locationCode,
+    severity_level: Number(severityLevel),
+    payload: { headline: "Simulated event (v0)" }
   };
+
+  try {
+    const res = await fetch("http://localhost:5000/simulate-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) throw new Error("Simulation failed");
+
+    const simData = await res.json();
+    setSimulateResult(simData);
+
+  } catch (err) {
+    setError(err.message || "Failed to simulate event or fetch dashboard.");
+  } finally {
+    setLoading(false);
+  }
+};
   
   /*const simulateEvent = async () => {
     setError(null); setLoading(true); setDashboard(null); setSimulateResult(null);
@@ -387,14 +382,26 @@ export default function OperatorScreen() {
   const decisionPieData    = simulateResult?.detailed_breakdown || [];
   const decisionPieColors  = [C.red,"#f59e0b","#64748b","#94a3b8","#cbd5e1"];
 
-  
+  // Mock business vs leisure breakdown (proportional to evaluated, realistic split)
   const evaluated = simulateResult?.customers_evaluated || 0;
-  const purposeData = dashboard?.purpose_breakdown || [];
+  const busCount  = Math.round(evaluated * 0.38);
+  const leisCount = evaluated - busCount;
+  const purposeData = evaluated > 0 ? [
+    { category:"Leisure",  count: leisCount },
+    { category:"Business", count: busCount  },
+  ] : [];
   const purposeColors = [C.blue, C.red];
 
-  
+  // Mock policy tier breakdown
   const notified   = (simulateResult?.notifications_created || 0);
-  const policyData = dashboard?.policy_breakdown || [];
+  const basicCount    = Math.round(evaluated * 0.45);
+  const stdCount      = Math.round(evaluated * 0.38);
+  const platCount     = evaluated - basicCount - stdCount;
+  const policyData = evaluated > 0 ? [
+    { category:"Tempo Digital",    count: basicCount },
+    { category:"Tempo", count: stdCount   },
+    { category:"Long Trip Temporary", count: platCount  },
+  ] : [];
   const policyColors = ["#94a3b8", C.blue, C.red];
 
   return (
@@ -545,7 +552,8 @@ export default function OperatorScreen() {
                 <div style={{ ...sankeyStyles.title, marginBottom:"12px" }}>
                   Dashboard — Event <code style={S.code}>#{dashboard.event_id}</code>
                 </div>
-              
+                {/* REMOVE DUPLICATE PIE CHART HERE */}
+                {/*<DonutChart data={dashboard.detailed_breakdown} title="DB Confirmed Breakdown" colors={decisionPieColors}/>*/}
                 <details style={S.rawDetails}>
                   <summary style={S.rawSum}>View raw JSON</summary>
                   <pre style={S.rawPre}>{JSON.stringify(dashboard, null, 2)}</pre>
