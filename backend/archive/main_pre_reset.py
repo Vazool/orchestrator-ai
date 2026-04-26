@@ -4,7 +4,7 @@ import random
 import asyncio
 import os
 from datetime import datetime
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -558,20 +558,3 @@ def submit_feedback(payload: dict, db: Session = Depends(get_db)):
         db.rollback()
         print(f"SQL Error in feedback: {e}")
         raise HTTPException(status_code=500, detail="Database error")
-
-@app.post("/admin/reset")
-def reset_demo(db: Session = Depends(get_db)):
-    try:
-        db.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
-        db.execute(text("TRUNCATE TABLE actions"))
-        db.execute(text("TRUNCATE TABLE decisions"))
-        db.execute(text("TRUNCATE TABLE events"))
-        db.execute(text("TRUNCATE TABLE alert_feedback"))
-        db.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
-
-        db.commit()
-        return {"status": "ok"}
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Reset failed")
