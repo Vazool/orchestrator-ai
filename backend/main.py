@@ -9,6 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Custom imports
 from database import engine, SessionLocal, get_db
