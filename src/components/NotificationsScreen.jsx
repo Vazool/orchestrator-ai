@@ -24,7 +24,7 @@ function NotificationsScreen() {
   const [animKey, setAnimKey]           = useState(0);
 
   const fetchAlerts = () => {
-    fetch("http://localhost:5000/alerts")
+    fetch("/api/alerts")
       .then(res => res.json())
       .then(data => {
         setAlerts(data);

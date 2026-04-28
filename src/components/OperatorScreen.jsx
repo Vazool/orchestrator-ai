@@ -343,7 +343,7 @@ export default function OperatorScreen() {
     };
 
     try {
-      const res = await fetch("http://localhost:5000/simulate-event", {
+      const res = await fetch("/api/simulate-event", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -355,7 +355,7 @@ export default function OperatorScreen() {
       setSimulateResult(simData);
 
       // Fetch dashboard to populate Travel Purpose and Policy Tier charts
-      const dashRes = await fetch(`http://localhost:5000/dashboard?event_id=${simData.event_id}`);
+      const dashRes = await fetch(`/api/dashboard?event_id=${simData.event_id}`);
       if (!dashRes.ok) throw new Error("Dashboard fetch failed");
       setDashboard(await dashRes.json());
 
@@ -471,11 +471,8 @@ export default function OperatorScreen() {
           <button
             onClick={async () => {
               try {
-                const res = await fetch("/admin/reset", {
-                  method: "POST",
-                  headers: {
-                    "x-admin-key": "your-secret-key"
-                  }
+                const res = await fetch("/api/admin/reset", {
+                  method: "POST"
                 });
 
                 if (!res.ok) throw new Error();

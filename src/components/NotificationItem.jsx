@@ -206,7 +206,7 @@ function NotificationItem({ id: alertId, customerId, message, time, isRead: init
       setIsRead(true);
       if (onMarkRead) onMarkRead();
       if (alertId) {
-        fetch(`http://localhost:5000/alerts/${alertId}/read`, { method: "PATCH" })
+        fetch(`/api/alerts/${alertId}/read`, { method: "PATCH" })
           .catch(err => console.error("Mark-read failed:", err));
       }
     }
@@ -224,7 +224,7 @@ function NotificationItem({ id: alertId, customerId, message, time, isRead: init
 
   const handleOptOut = () => {
     if (!customerId) return;
-    fetch(`http://localhost:5000/customers/${customerId}/opt-out`, { method: "PATCH" })
+    fetch(`/api/customers/${customerId}/opt-out`, { method: "PATCH" })
       .then(() => setOptedOut(true))
       .catch(err => console.error("Opt-out failed:", err));
   };
@@ -233,7 +233,7 @@ function NotificationItem({ id: alertId, customerId, message, time, isRead: init
     setDialog(null);
     // Persist emoji feedback to backend
     if (alertId) {
-      fetch("http://localhost:5000/alerts/feedback", {
+      fetch("/api/alerts/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ alert_id: alertId, mood }),
